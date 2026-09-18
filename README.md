@@ -1,0 +1,119 @@
+# AI Usage Bar
+
+[![CI](https://github.com/DragonF1/AIUsageBar/actions/workflows/ci.yml/badge.svg)](https://github.com/DragonF1/AIUsageBar/actions/workflows/ci.yml)
+
+macOS menu bar app showing your Claude subscription usage (5-hour session, weekly, per-model) with colored progress bars, plus the Anthropic status page incident banner. A second tab shows Google Antigravity's four limits the same way: weekly and five-hour for the Gemini models, weekly and five-hour for the Claude and GPT models. Refreshes every 5 minutes. The menu bar follows the selected tab: `5h% / weekly%` next to the Claude starburst, or the Gemini group's `5h% / weekly%` next to the Antigravity arch, with the icon colored by whichever bar is closer to its cap.
+
+No cookie scraping. It reads the OAuth token Claude Code already keeps in your Keychain and asks Anthropic's usage endpoint directly, the same data `claude /usage` shows.
+
+## Requirements
+
+- macOS 14+
+- Claude Code installed and signed in with a Pro/Max subscription (`claude` then `/login`). API-key logins have no usage windows to show.
+- Optional: Antigravity (`/Applications/Antigravity.app`) signed in with a Google account. Without it the Antigravity tab shows "No Antigravity login found".
+- Xcode command line tools (to build)
+
+Everything runs locally. The app talks to exactly four hosts: `api.anthropic.com` and `platform.claude.com` for Claude usage, `status.claude.com` for incidents, and Google's `oauth2.googleapis.com` / `*cloudcode-pa.googleapis.com` for Antigravity. No telemetry, no accounts, nothing of yours leaves the machine except the tokens those calls need.
+
+## Build and install
+
+```sh
+git clone https://github.com/DragonF1/AIUsageBar.git
+cd AIUsageBar
+scripts/build-app.sh --install
+```
+
+Builds `dist/AIUsageBar.app`, copies it to `/Applications`, launches it. The app registers itself as a login item on every launch at whatever path it runs from; `--install` moves that login item from `dist/` to `/Applications`.
+
+The build is ad-hoc signed (no Apple developer certificate), which is why there is no prebuilt download: a downloaded ad-hoc app is refused by Gatekeeper, one you built yourself is not. Expect one Keychain prompt for the `Claude Code-credentials` item after each rebuild, because the ad-hoc signature changes every time.
+
+`swift test` runs the unit tests (parsers, refresh flow, session loader, resume command), and the CI workflow in `.github/workflows/ci.yml` runs them plus `scripts/build-app.sh` on a macOS runner. The app icon is drawn by `scripts/make-icon.py` (needs Pillow); the checked-in `Sources/AIUsageBar/Resources/AppIcon.icns` is its output.
+
+## Configuration
+
+Optional. The app reads `~/.config/aiusagebar/` and never writes there.
+
+- `config.json` has two switches. `{"claude": {"refresh": true}}` lets the app refresh Claude Code's token itself (see "How it works"). `"resume"` changes what "Resume" in the sessions window runs. Default is a new Terminal window with `claude --resume <id>` in the session's folder. To go through your own launcher script instead (say one that adds `--permission-mode` or `--effort` flags):
+
+  ```json
+  {"resume": {"launcher": "~/bin/claude-launch.sh", "env_file": "~/bin/claude-launch.env"}}
+  ```
+
+  The script receives `CLAUDE_RESUME` (session id) and `CLAUDE_LAUNCH_DIR` (its folder) in the environment, plus every `KEY=value` line of `env_file`, and is expected to open the terminal window itself. Paths may start with `~`.
+- `antigravity-client.json` lets the app refresh an expired Antigravity token itself. It holds the OAuth client Antigravity signs in with, which this repository does not ship:
+
+  ```json
+  {"client_id": "...apps.googleusercontent.com", "client_secret": "..."}
+  ```
+
+  Without the file the Antigravity tab only reads the token Antigravity keeps fresh, and says so when that token has expired.
+
+## How it works
+
+- Token: Keychain item `Claude Code-credentials` (falls back to `~/.claude/.credentials.json`). Read and written through `/usr/bin/security`, the same path Claude Code uses, so no Keychain access prompt.
+- Data: `GET https://api.anthropic.com/api/oauth/usage` with `Authorization: Bearer` and `anthropic-beta: oauth-2025-04-20`. Rows come from the `limits` array (session, weekly all models, weekly per model) plus extra-usage credits when enabled.
+- Token refresh: off by default. When the stored access token has expired the app says so and keeps showing the last numbers until Claude Code refreshes it (which it does whenever `claude` runs). With `{"claude": {"refresh": true}}` in `config.json` the app instead runs the standard refresh-token flow against `platform.claude.com/v1/oauth/token` (fallback `console.anthropic.com`) and writes the new tokens back so Claude Code picks them up too. Guards: re-reads the Keychain first, at most one attempt per minute, and defers to a running `claude` process for the first 3 minutes after expiry. The previous credential is backed up to `~/Library/Application Support/AIUsageBar/creds.bak`. Refresh tokens are single-use, which is why this is opt-in: it means letting a second program rotate Claude Code's login.
+- Status: polls `status.claude.com/api/v2/summary.json` every 5 minutes and shows the current incident (indicator, affected products, latest update, link to the status page) above the usage rows; "All systems operational" when clear.
+- Rate limits: honors `Retry-After` on 429, otherwise backs off 15 minutes, and keeps showing the last good numbers greyed out.
+
+## Claude Code tokens
+
+Two single-line rows under the usage bars on the Claude tab, "Daily tokens" and "Weekly tokens", each with the token count and an estimated cost on the right. Hover a row for the breakdown by bucket and the window boundary.
+
+- What is counted: every assistant response in the Claude Code transcripts under `~/.claude/projects` (the `*.jsonl` session files, including subagent and workflow transcripts nested inside them). A response's `usage` has four buckets, input, output, cache write and cache read, and the row shows their sum. One response is written as several lines (one per content block, same `message.id`) and a resumed or forked session copies lines into a new file, so responses are deduplicated on message id across all files and the copy with the larger total wins. Synthetic lines and lines without usage are skipped. Nothing leaves the machine.
+- Windows: "Today" is since local midnight. "This week" is the 7 days ending at your weekly limit's reset time when the usage endpoint has reported one (the tooltip reads "Since Thu 6:00 AM", so the row lines up with the weekly bar above it); until then it is a rolling 7 days and the tooltip says so.
+- Pricing (USD per million tokens, list prices, no discounts):
+
+  | Model | Input | Output | Cache read |
+  |---|---|---|---|
+  | claude-fable-5-1 | $10 | $50 | $0.25 |
+  | claude-fable-5 | $10 | $50 | $1 |
+  | claude-opus-5 / 4-8 / 4-7 / 4-6 | $5 | $25 | $0.50 |
+  | claude-sonnet-5 | $2 | $10 | $0.20 |
+  | claude-sonnet-4-6 | $3 | $15 | $0.30 |
+  | claude-haiku-4-5 | $1 | $5 | $0.10 |
+
+  Cache write is 1.25x the input price for the 5 minute TTL and 2x for the 1 hour TTL. Cache read is 0.1x the input price unless the table says otherwise. Model ids are matched by prefix, so a date suffix or a `[1m]` context marker does not matter.
+- Costs are estimates: what the same tokens would cost on the API at list price, which is not what a subscription bills. Tokens from a model the table does not know are still counted, but the cost is shown as a floor ("≥ $12.34 est.") and the tooltip says how many tokens went unpriced.
+- Cache: byte offsets per transcript and the deduplicated records live in `~/Library/Application Support/AIUsageBar/tokens.json`, so each 5 minute poll (and each popover open after a minute) reads only the bytes appended since the last one. Records older than 8 days are dropped.
+- First launch: scans the last 8 days of transcripts once, a few seconds for a busy week, off the main thread. The rows show "Scanning transcripts…" until it finishes. To force a full rescan, quit the app, delete `tokens.json` and relaunch (the running app keeps the cache in memory and would write it back).
+
+## Sessions window
+
+The "Sessions" button under the token rows opens a separate window listing every Claude Code session: the ones running now (busy or idle), then the ones that answered today but whose process is gone. Each row shows the session's colour, its title, its tokens and estimated cost over the retained 8 days, the folder it runs in, its branch, how long it has been going and when it last answered. Hover a row for the session id, PID, full path, last prompt and the token breakdown. Esc or ⌘W closes it; it refreshes every 15 s while open.
+
+- Open sessions come from Claude Code's registry, `~/.claude/sessions/<pid>.json` (id, folder, busy/idle, a `/rename` name), kept only when the PID is still alive. Titles, colours, last prompts and branches come from the bookkeeping lines Claude Code writes into each transcript (`ai-title`, `agent-color`, `last-prompt`). Cost is the same list-price estimate as the token rows; the API does not report a session's share of the 5-hour limit.
+- "Show" (open session) brings that session's Terminal window to the front: `ps` gives the PID's tty, and Terminal is asked over AppleScript for the tab on it. Sessions running in another terminal app get a "No Terminal.app window" notice. macOS asks once to let AI Usage Bar control Terminal.
+- "Resume" (closed session) reopens it exactly like `/resume`: Terminal gets a new window that changes into the session's folder (transcripts live per folder) and runs `claude --resume <id>` in a login shell, so `claude` resolves through your own PATH. With a `config.json` launcher (see Configuration) the app runs that script instead, with `CLAUDE_RESUME` and `CLAUDE_LAUNCH_DIR` in its environment. No colour is passed either way: Claude Code reads the session's own colour back from the transcript, so the session keeps the colour it had. A session whose folder is gone cannot be resumed and says so. Double-clicking a row does the same as its button. On success the sessions window closes.
+
+## Antigravity tab
+
+- Token: Antigravity's standalone app keeps its Google OAuth token in `~/.gemini/jetski-standalone-oauth-token`. This app only reads that file, never writes it. When the access token in it has expired and `~/.config/aiusagebar/antigravity-client.json` exists, the app runs the refresh-token flow against `oauth2.googleapis.com/token` with that client and caches only the new access token in `~/Library/Application Support/AIUsageBar/antigravity-token.json` (mode 0600, at most one refresh per minute). Without the file it waits for Antigravity to refresh the token itself. Sign back in inside Antigravity if the tab says the login expired.
+- Data: `POST <backend>/v1internal:retrieveUserQuotaSummary` with body `{}`, the same call behind Antigravity's quota panel. It returns `groups[]` (Gemini Models; Claude and GPT models), each with `buckets[]` for the `weekly` and `5h` windows carrying `remainingFraction`, `resetTime` and Google's own "will fully refresh in 2 days, 17 hours" sentence. Shown as percent used, like the Claude rows. A bucket that arrives without `remainingFraction` counts as fully used: Google's JSON omits zero-valued fields.
+- Backend: Google runs two of them and meters quota separately on each. Antigravity itself asks `cloudcode-pa.googleapis.com/v1internal:loadCodeAssist` first and then talks to `cloudcode-pa.googleapis.com` when the account is under GCP terms of service (`paidTier.usesGcpTos`), otherwise to `daily-cloudcode-pa.googleapis.com`, which is where a consumer Google account lands. The app follows the same rule, so its rows match the panel; asking the other backend returns a mostly untouched quota. If the account lookup fails on a poll, the app keeps asking the backend of the last good poll (remembered in the cache), or the daily one when the cache has no backend yet (fresh install or a cache from an older build).
+- Under each row: the reset time, worded like the Claude rows. Google's own sentence ("You have used some of your weekly limit, it will fully refresh in 2 days, 18 hours.") is received but not shown. A 5-hour row nobody has touched reads "No usage this window yet", because Google reports its reset as five hours from whenever you ask.
+- Plan badge: the same `loadCodeAssist` answer carries the tier name ("Google AI Pro"). Failure there only costs the badge, which keeps its last name; a 429 there backs off like one on the quota call.
+- Same 5 minute poll, same 429/backoff handling and greyed-out cache as the Claude tab, no status card.
+- Diagnostics: each poll writes one line to the unified log, `fetch ok (timer) via https://daily-cloudcode-pa.googleapis.com: gemini-weekly=0.4851 gemini-5h=1.0000 3p-weekly=0.6651 3p-5h=1.0000`, and each failure one `fetch failed (...)` line. Read them with
+
+  ```sh
+  log show --info --predicate 'subsystem == "io.github.dragonf1.aiusagebar"' --last 1h
+  ```
+
+  or watch live with `log stream --level info --predicate 'subsystem == "io.github.dragonf1.aiusagebar"'`. Compare the fractions with Antigravity's quota panel: the app shows `100 - fraction * 100` as percent used.
+
+## Caveats
+
+- The usage and token endpoints are internal and undocumented; Anthropic and Google may change them.
+- Refresh tokens rotate. With `claude.refresh` on, if a `/login` prompt ever shows up in Claude Code right after this app refreshed, sign in again (or restore `creds.bak` into the Keychain).
+- Not affiliated with Anthropic or Google.
+
+## License
+
+MIT, see `LICENSE`.
+
+## Tests
+
+```sh
+swift test
+```
