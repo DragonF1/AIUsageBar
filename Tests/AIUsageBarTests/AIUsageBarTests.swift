@@ -1657,6 +1657,9 @@ final class CostReportTests: XCTestCase {
     func testAxisDollars() {
         XCTAssertEqual(CostView.axisDollars(0), "$0")
         XCTAssertEqual(CostView.axisDollars(12.6), "$13")
+        XCTAssertEqual(CostView.axisDollars(0.5), "$0.50")
+        XCTAssertEqual(CostView.axisDollars(1.5), "$1.50")
+        XCTAssertEqual(CostView.axisDollars(2), "$2")
         XCTAssertEqual(CostView.axisDollars(1500), "$1.5k")
     }
 }

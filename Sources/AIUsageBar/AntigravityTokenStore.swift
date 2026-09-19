@@ -43,4 +43,11 @@ final class AntigravityTokenStore: TokenLedger {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
+
+    /// Takes a scan's worth of records as if the scanner had just produced them (the screenshot renderer).
+    func adopt(records: [TokenRecord], at date: Date) {
+        self.records = records
+        lastScanned = date
+        error = nil
+    }
 }

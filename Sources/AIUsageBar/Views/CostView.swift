@@ -178,9 +178,12 @@ struct CostView: View {
         date.formatted(.dateTime.weekday(.abbreviated).month(.abbreviated).day())
     }
 
-    /// "$0", "$12", "$1.5k": the axis has no room for cents.
+    /// "$0", "$12", "$1.5k", and "$0.50" only when the ticks land under a dollar apart, so a
+    /// quiet month does not read "$0 $0 $1 $1".
     static func axisDollars(_ usd: Double) -> String {
-        usd >= 1000 ? "$" + TokenText.compact(Int(usd)) : String(format: "$%.0f", usd)
+        if usd >= 1000 { return "$" + TokenText.compact(Int(usd)) }
+        if usd >= 10 || usd == usd.rounded() { return String(format: "$%.0f", usd) }
+        return String(format: "$%.2f", usd)
     }
 
     // MARK: - models

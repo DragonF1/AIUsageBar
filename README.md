@@ -6,6 +6,52 @@ macOS menu bar app showing your Claude subscription usage (5-hour session, weekl
 
 No cookie scraping. It reads the OAuth token Claude Code already keeps in your Keychain and asks Anthropic's usage endpoint directly, the same data `claude /usage` shows.
 
+## Screenshots
+
+The menu bar item on either tab, and the popover behind it:
+
+<p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/menubar-claude-dark.png">
+  <img src="docs/screenshots/menubar-claude-light.png" width="310" alt="Menu bar with the Claude starburst, 34% / 58%">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/menubar-antigravity-dark.png">
+  <img src="docs/screenshots/menubar-antigravity-light.png" width="310" alt="Menu bar with the Antigravity arch, 12% / 31%">
+</picture>
+</p>
+<p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/popover-claude-dark.png">
+  <img src="docs/screenshots/popover-claude-light.png" width="300" alt="Claude Code tab: 5-hour, weekly and Opus bars with pace lines, extra usage, cost rows, sessions, status card">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/popover-antigravity-dark.png">
+  <img src="docs/screenshots/popover-antigravity-light.png" width="300" alt="Antigravity tab: Gemini and Claude/GPT weekly and 5-hour bars, cost rows, Google Cloud status card">
+</picture>
+</p>
+
+The sessions window and the two cost windows:
+
+<p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/sessions-dark.png">
+  <img src="docs/screenshots/sessions-light.png" width="660" alt="Claude Code Sessions window: open sessions with Busy/Idle, tokens, cost and Show buttons, then sessions closed today with Resume buttons">
+</picture>
+</p>
+<p>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/cost-claude-dark.png">
+  <img src="docs/screenshots/cost-claude-light.png" width="520" alt="Claude Code Cost window: 30-day bar chart, totals, by model, by project">
+</picture>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/cost-antigravity-dark.png">
+  <img src="docs/screenshots/cost-antigravity-light.png" width="520" alt="Antigravity Cost window: 30-day bar chart, totals, by model">
+</picture>
+</p>
+
+The numbers in these pictures are made up. `scripts/render-screenshots.sh` draws them from a fixture through the app's own views (`AIUsageBar --render <dir> --appearance light|dark`), so they track the code without anyone's plan, spend or folders in them.
+
 ## Requirements
 
 - macOS 14+
@@ -27,7 +73,7 @@ Builds `dist/AIUsageBar.app`, copies it to `/Applications`, launches it. "Start 
 
 There is no Apple developer certificate behind the build, which is why there is no prebuilt download: a downloaded app without one is refused by Gatekeeper, one you built yourself is not. Out of the box the build is ad-hoc signed, and an ad-hoc signature changes with every build, so macOS treats each rebuild as a new app: any privacy permission it asked for (Removable Volumes, when Antigravity's files live on an external disk) is asked again. Run `scripts/make-signing-identity.sh` once to put a self-signed "AI Usage Bar Dev" identity in your login keychain; `scripts/build-app.sh` signs with it from then on (or with whatever `CODESIGN_IDENTITY` names), the app's designated requirement stays the same across builds, and a grant given once is kept. The identity is untrusted as far as `security find-identity -v` is concerned, which is fine for codesign and changes nothing about Gatekeeper.
 
-`swift test` runs the unit tests (parsers, refresh flow, session loader, resume command, pace forecast, notification rules), and the CI workflow in `.github/workflows/ci.yml` runs them plus `scripts/build-app.sh` on a macOS runner. The app icon is drawn by `scripts/make-icon.py` (needs Pillow); the checked-in `Sources/AIUsageBar/Resources/AppIcon.icns` is its output.
+`swift test` runs the unit tests (parsers, refresh flow, session loader, resume command, pace forecast, notification rules), and the CI workflow in `.github/workflows/ci.yml` runs them plus `scripts/build-app.sh` on a macOS runner. The app icon is drawn by `scripts/make-icon.py` (needs Pillow); the checked-in `Sources/AIUsageBar/Resources/AppIcon.icns` is its output. The README screenshots come from `scripts/render-screenshots.sh`: it builds the app and runs it with `--render`, which shows each surface with fixture numbers, captures it off the view (no Screen Recording grant) and quits, once per appearance; `scripts/shrink-png.py` then palette-quantises the PNGs when Pillow and NumPy are installed. The windows flash up for a few seconds while it runs.
 
 ## Configuration
 

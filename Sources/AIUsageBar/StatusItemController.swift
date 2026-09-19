@@ -81,50 +81,25 @@ final class StatusItemController: NSObject {
 
     @objc private func render() {
         guard let button = item.button else { return }
-        func pct(_ v: Double?) -> String { v.map { "\(Int($0.rounded()))%" } ?? "–" }
         // Claude tab: "8% / 32%" = 5-hour session / weekly all models.
         // Antigravity tab: "8% / 52%" = Gemini 5-hour / Gemini weekly. Claude and GPT limits
         // live in the popover only.
-        // Leading space pads the gap between the icon and the numbers.
         let tab = UsageTab.current
         let metric = Preferences.menuBarMetric
-        let text: String
-        let tint: UsageColor.Icon?
-        let stale: Bool
+        let title: MenuBarTitle
         switch tab {
         case .claude:
-            text = " \(pct(store.sessionPercent)) / \(pct(store.weeklyPercent))"
-            tint = UsageColor.icon(session: store.sessionPercent, weekly: store.weeklyPercent, metric: metric)
-            stale = store.isStale || tint == nil
+            title = MenuBarTitle(tab: tab, session: store.sessionPercent, weekly: store.weeklyPercent,
+                                 isStale: store.isStale, metric: metric)
         case .antigravity:
-            text = " \(pct(antigravity.geminiSessionPercent)) / \(pct(antigravity.geminiWeeklyPercent))"
-            tint = UsageColor.icon(session: antigravity.geminiSessionPercent, weekly: antigravity.geminiWeeklyPercent,
-                                   metric: metric)
-            stale = antigravity.isStale || tint == nil
+            title = MenuBarTitle(tab: tab, session: antigravity.geminiSessionPercent, weekly: antigravity.geminiWeeklyPercent,
+                                 isStale: antigravity.isStale, metric: metric)
         }
-        let color: NSColor
-        switch stale ? nil : tint {
-        case nil: color = .secondaryLabelColor
-        case .green: color = .systemGreen
-        case .yellow: color = .systemYellow
-        case .red: color = .systemRed
-        case .lightRed: color = Self.lightRed
-        case .darkRed: color = Self.darkRed
-        }
-        // Text stays the menu bar's label color; only the icon carries the usage color.
-        let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
-        button.attributedTitle = NSAttributedString(string: text, attributes: [
-            .foregroundColor: stale ? NSColor.secondaryLabelColor : NSColor.labelColor,
-            .font: font,
-        ])
-        button.image = tab == .claude ? ClaudeIcon.image(color: color) : AntigravityIcon.image(color: color)
+        button.attributedTitle = title.attributedText
+        button.image = title.image
         button.imagePosition = .imageLeading
         button.toolTip = tooltip(for: tab)
     }
-
-    // Weekly-window reds, either side of systemRed so the three stay tellable apart.
-    private static let lightRed = NSColor(srgbRed: 1.0, green: 0.52, blue: 0.5, alpha: 1)
-    private static let darkRed = NSColor(srgbRed: 0.62, green: 0.05, blue: 0.09, alpha: 1)
 
     private func tooltip(for tab: UsageTab) -> String {
         func pct(_ v: Double?) -> String { v.map { "\(Int($0.rounded()))%" } ?? "–" }
@@ -269,6 +244,52 @@ final class StatusItemController: NSObject {
 /// Claude's starburst mark as an alpha mask (64 px PNG, embedded so the app
 /// stays a single binary), tinted in the usage color. Purely a glance
 /// indicator: green means nowhere near a limit.
+/// What the status item shows for one tab: "8% / 32%" beside the product mark tinted by
+/// usage. Text stays the menu bar's label colour; only the icon carries the usage colour, and
+/// both go secondary when the numbers are stale. Pure, so the screenshot renderer can draw the
+/// same strip from fixture numbers.
+struct MenuBarTitle {
+    var tab: UsageTab
+    var text: String
+    var tint: UsageColor.Icon?
+    var stale: Bool
+
+    init(tab: UsageTab, session: Double?, weekly: Double?, isStale: Bool, metric: MenuBarMetric) {
+        func pct(_ v: Double?) -> String { v.map { "\(Int($0.rounded()))%" } ?? "–" }
+        self.tab = tab
+        // Leading space pads the gap between the icon and the numbers.
+        text = " \(pct(session)) / \(pct(weekly))"
+        tint = UsageColor.icon(session: session, weekly: weekly, metric: metric)
+        stale = isStale || tint == nil
+    }
+
+    // Weekly-window reds, either side of systemRed so the three stay tellable apart.
+    static let lightRed = NSColor(srgbRed: 1.0, green: 0.52, blue: 0.5, alpha: 1)
+    static let darkRed = NSColor(srgbRed: 0.62, green: 0.05, blue: 0.09, alpha: 1)
+
+    var iconColor: NSColor {
+        switch stale ? nil : tint {
+        case nil: return .secondaryLabelColor
+        case .green: return .systemGreen
+        case .yellow: return .systemYellow
+        case .red: return .systemRed
+        case .lightRed: return Self.lightRed
+        case .darkRed: return Self.darkRed
+        }
+    }
+
+    var attributedText: NSAttributedString {
+        NSAttributedString(string: text, attributes: [
+            .foregroundColor: stale ? NSColor.secondaryLabelColor : NSColor.labelColor,
+            .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium),
+        ])
+    }
+
+    var image: NSImage {
+        tab == .claude ? ClaudeIcon.image(color: iconColor) : AntigravityIcon.image(color: iconColor)
+    }
+}
+
 enum ClaudeIcon {
     /// The same mark as a template image, for controls that tint their own images (the
     /// popover's provider switch draws it in the label colour, inverted on the selected segment).

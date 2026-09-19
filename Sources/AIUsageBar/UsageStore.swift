@@ -27,8 +27,11 @@ final class UsageStore {
     private var timer: Timer?
     private var backoffUntil: Date?
     private var inFlight = false
+    /// nil disables the cache; tests and the screenshot renderer pass nil so they never touch the app's real file.
+    private let cacheURL: URL?
 
-    init() {
+    init(cacheURL: URL? = AppPaths.supportDirectory.appendingPathComponent("usage.json")) {
+        self.cacheURL = cacheURL
         loadCache()
     }
 
@@ -79,12 +82,19 @@ final class UsageStore {
     }
 
     private func apply(_ response: UsageResponse) async throws {
+        adopt(response, plan: subscriptionType, at: Date())
+    }
+
+    /// Takes a response as if a poll had just returned it: the rows, the plan badge, the
+    /// "Updated" time and the pace tracker all follow. The screenshot renderer feeds fixtures this way.
+    func adopt(_ response: UsageResponse, plan: String?, at date: Date) {
         usage = response
-        lastUpdated = Date()
+        subscriptionType = plan
+        lastUpdated = date
         state = .ok
         backoffUntil = nil
         saveCache()
-        monitor?.observe(response.readings(extraUsage: Preferences.extraUsage), now: lastUpdated ?? Date())
+        monitor?.observe(response.readings(extraUsage: Preferences.extraUsage), now: date)
     }
 
     // MARK: - derived
@@ -104,10 +114,9 @@ final class UsageStore {
         var lastUpdated: Date
         var subscriptionType: String?
     }
-    private static var cacheURL: URL { AppPaths.supportDirectory.appendingPathComponent("usage.json") }
-
     private func loadCache() {
-        guard let data = try? Data(contentsOf: Self.cacheURL),
+        guard let cacheURL,
+              let data = try? Data(contentsOf: cacheURL),
               let cache = try? UsageClient.decoder.decode(Cache.self, from: data) else { return }
         usage = cache.usage
         lastUpdated = cache.lastUpdated
@@ -116,12 +125,12 @@ final class UsageStore {
     }
 
     private func saveCache() {
-        guard let usage, let lastUpdated else { return }
+        guard let cacheURL, let usage, let lastUpdated else { return }
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         guard let data = try? enc.encode(Cache(usage: usage, lastUpdated: lastUpdated, subscriptionType: subscriptionType)) else { return }
-        try? FileManager.default.createDirectory(at: AppPaths.supportDirectory, withIntermediateDirectories: true)
-        try? data.write(to: Self.cacheURL, options: .atomic)
+        try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: cacheURL, options: .atomic)
     }
 
     static let timeFormatter: DateFormatter = {

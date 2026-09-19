@@ -38,6 +38,27 @@ MainActor.assumeIsolated {
         try? SMAppService.mainApp.unregister()
         exit(0)
     }
+    // Screenshot mode: fixture numbers in, PNGs out, no stores started (see Renderer.swift).
+    do {
+        if let options = try ScreenshotRenderer.options(from: CommandLine.arguments) {
+            // Before NSApplication exists: AppKit reads the accent colour once at start-up.
+            ScreenshotRenderer.installDefaults(tab: .claude)
+            let app = NSApplication.shared
+            Task { @MainActor in
+                do {
+                    try await ScreenshotRenderer.run(options)
+                    exit(0)
+                } catch {
+                    FileHandle.standardError.write(Data("render failed: \(error.localizedDescription)\n".utf8))
+                    exit(1)
+                }
+            }
+            app.run()
+        }
+    } catch {
+        FileHandle.standardError.write(Data("\(error.localizedDescription)\n".utf8))
+        exit(2)
+    }
     let app = NSApplication.shared
     let delegate = AppDelegate()
     app.delegate = delegate

@@ -103,7 +103,7 @@ final class AntigravityStore {
         let summary = try await client.fetch(accessToken: token, host: host)
         // Default level so `log show` finds it after the fact; info and debug are memory-only.
         Self.log.notice("fetch ok (\(reason, privacy: .public)) via \(host, privacy: .public): \(summary.logLine, privacy: .public)")
-        accept(AntigravityUsage(summary: summary, tier: account?.tier ?? usage?.tier, host: host))
+        adopt(AntigravityUsage(summary: summary, tier: account?.tier ?? usage?.tier, host: host))
     }
 
     /// The IDE's own language server, on localhost. False when it is not running or would not
@@ -116,7 +116,7 @@ final class AntigravityStore {
             // gets a token asks the same one.
             let host = result.endpoint.flatMap { AntigravityClient.isKnownHost($0) ? $0 : nil } ?? remembered
             Self.log.notice("fetch ok (\(reason, privacy: .public)) via Antigravity pid \(result.pid, privacy: .public) port \(result.port, privacy: .public) (\(result.endpoint ?? "?", privacy: .public)), token path failed: \(tokenError, privacy: .public): \(result.summary.logLine, privacy: .public)")
-            accept(AntigravityUsage(summary: result.summary, tier: result.tier ?? usage?.tier, host: host))
+            adopt(AntigravityUsage(summary: result.summary, tier: result.tier ?? usage?.tier, host: host))
             return true
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
@@ -125,13 +125,15 @@ final class AntigravityStore {
         }
     }
 
-    private func accept(_ next: AntigravityUsage) {
+    /// Takes a usage value as if a poll had just returned it: the rows, the tier badge, the
+    /// "Updated" time and the pace tracker all follow. The screenshot renderer feeds fixtures this way.
+    func adopt(_ next: AntigravityUsage, at date: Date = Date()) {
         usage = next
-        lastUpdated = Date()
+        lastUpdated = date
         state = .ok
         backoffUntil = nil
         saveCache()
-        monitor?.observe(next.readings, now: lastUpdated ?? Date())
+        monitor?.observe(next.readings, now: date)
     }
 
     // MARK: - derived

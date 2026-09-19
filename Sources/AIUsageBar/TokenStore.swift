@@ -59,6 +59,16 @@ final class TokenStore: TokenLedger {
         live = await Task.detached(priority: .utility) { registry.live() }.value
     }
 
+    /// Takes a scan's worth of data as if the scanner had just produced it. The screenshot
+    /// renderer feeds fixtures this way; nothing is read from disk.
+    func adopt(records: [TokenRecord], sessions: [SessionMeta], live: [LiveSession], at date: Date) {
+        self.records = records
+        self.sessions = Dictionary(uniqueKeysWithValues: sessions.map { ($0.sessionId, $0) })
+        self.live = live
+        lastScanned = date
+        error = nil
+    }
+
     // MARK: - derived
 
     /// Rolling 30 calendar days ending today: local midnight `CostReport.dayCount - 1` days ago.
