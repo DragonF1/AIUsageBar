@@ -3,8 +3,8 @@ import SwiftUI
 
 /// The cost window: today and the last 7, 30 or 90 days from one ledger (Claude Code's
 /// transcripts or Antigravity's conversations), a bar per day, and the same days split by
-/// model and, for Claude Code, by the folder each session ran in. Hovering a bar puts that
-/// day's numbers under the chart. Every figure is the list-price estimate the popover's cost rows use.
+/// model. Hovering a bar puts that day's numbers under the chart. Every figure is the
+/// list-price estimate the popover's cost rows use.
 struct CostView: View {
     var tokens: any TokenLedger
     var onRefresh: () -> Void
@@ -12,11 +12,7 @@ struct CostView: View {
     @AppStorage(Preferences.Key.costRange) private var range: CostRange = .month
     @State private var now = Date()
     @State private var hovered: Date?
-    @State private var allProjects = false
     private let tick = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
-
-    /// Project rows shown before "Show all" is asked for.
-    static let projectPreview = 8
 
     private var report: CostReport { tokens.costReport(now: now, range: range) }
 
@@ -35,7 +31,6 @@ struct CostView: View {
                         stats(report)
                         chart(report)
                         models(report)
-                        projects(report)
                     }
                     .padding(16)
                 }
@@ -198,32 +193,6 @@ struct CostView: View {
                                  totals: share.totals,
                                  detail: share.model)
                     }
-                }
-            }
-        }
-    }
-
-    // MARK: - projects
-
-    /// The folder each session ran in, costliest first; the first eight, then all on request.
-    @ViewBuilder private func projects(_ report: CostReport) -> some View {
-        if !report.projects.isEmpty {
-            let shown = allProjects ? report.projects : Array(report.projects.prefix(Self.projectPreview))
-            VStack(alignment: .leading, spacing: 8) {
-                Text("BY PROJECT").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
-                    ForEach(shown) { share in
-                        TokenRow(title: share.folder.map { SessionText.folder($0) } ?? "Unknown folder",
-                                 totals: share.totals,
-                                 detail: share.folder ?? "Sessions whose transcript never said where they ran")
-                    }
-                }
-                if report.projects.count > Self.projectPreview {
-                    Button(allProjects ? "Show fewer" : "Show all \(report.projects.count)") {
-                        allProjects.toggle()
-                    }
-                    .buttonStyle(.link)
-                    .font(.caption)
                 }
             }
         }

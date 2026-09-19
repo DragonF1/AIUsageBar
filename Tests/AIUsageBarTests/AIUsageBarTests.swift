@@ -1587,7 +1587,6 @@ final class CostReportTests: XCTestCase {
         let report = CostReport.build([], now: now, calendar: utc)
         XCTAssertEqual(report.days.count, 30)
         XCTAssertTrue(report.models.isEmpty)
-        XCTAssertTrue(report.projects.isEmpty)
         XCTAssertEqual(report.total, TokenTotals())
         XCTAssertEqual(report.today, TokenTotals())
     }
@@ -1612,34 +1611,6 @@ final class CostReportTests: XCTestCase {
         XCTAssertEqual(TokenStore.retention, 91 * 86400)
         XCTAssertEqual(CostRange.allCases.map(\.axisStride), [1, 7, 14])
         XCTAssertEqual(CostRange.quarter.title, "90 days")
-    }
-
-    func testProjectsGroupBySessionFolderCostliestFirst() {
-        let records = [
-            record(1, model: "claude-opus-5", session: "a"),      // $0.0075 in ~/x
-            record(2, model: "claude-sonnet-5", session: "a"),    // $0.003 in ~/x
-            record(1, model: "claude-sonnet-5", session: "b"),    // $0.003 in ~/y
-            record(1, model: "claude-sonnet-5", session: "c"),    // $0.003, session without a cwd
-            record(1, model: "claude-sonnet-5", session: nil),    // $0.003, no session at all
-            record(1, model: "claude-sonnet-5", session: "d"),    // $0.003 in ~/y again
-            record(40, model: "claude-opus-5", session: "b"),     // outside the window
-        ]
-        let folders = ["a": "/Users/sam/x", "b": "/Users/sam/y", "d": "/Users/sam/y"]
-        let report = CostReport.build(records, now: now, calendar: utc, folders: folders)
-        XCTAssertEqual(report.projects.map(\.folder), ["/Users/sam/x", "/Users/sam/y", nil])
-        XCTAssertEqual(report.projects.map(\.totals.tokens), [2200, 2200, 2200])
-        XCTAssertEqual(report.projects[0].totals.cost, 0.0105, accuracy: 1e-9)
-        XCTAssertEqual(report.projects[1].totals.cost, 0.006, accuracy: 1e-9)
-        XCTAssertEqual(report.projects.reduce(0) { $0 + $1.totals.tokens }, report.total.tokens)
-        XCTAssertEqual(report.projects.map(\.id), ["/Users/sam/x", "/Users/sam/y", ""])
-    }
-
-    func testProjectsStayEmptyWithoutFolders() {
-        let report = CostReport.build([record(0, session: "a"), record(1)], now: now, calendar: utc)
-        XCTAssertTrue(report.projects.isEmpty)
-        XCTAssertEqual(report.total.tokens, 2200)
-        XCTAssertEqual(CostReport.build([record(0, session: "a")], now: now, calendar: utc, folders: [:])
-                           .projects.map(\.folder), [nil])
     }
 
     func testShareText() {
@@ -1723,22 +1694,6 @@ final class SessionScanTests: XCTestCase {
         XCTAssertEqual(sessions.map(\.sessionId), ["a"])
         XCTAssertEqual(sessions[0].lastPrompt?.count, 121)
         XCTAssertTrue(sessions[0].lastPrompt!.hasSuffix("…"))
-    }
-
-    @MainActor func testStoreOffersSessionFoldersToTheCostReport() async throws {
-        let root = try tempTranscriptRoot()
-        try writeTranscript(root, "p/a.jsonl",
-            assistantLine(id: "msg_a1", in: 10, out: 10, session: "a", cwd: "/Users/sam/x")
-            + assistantLine(id: "msg_a2", in: 20, out: 20, session: "a"))
-        try writeTranscript(root, "p/b.jsonl", assistantLine(id: "msg_b1", in: 1, out: 1, session: "b", cwd: nil))
-        let store = TokenStore()
-        store.scanner = TokenScanner(root: root, cacheURL: nil)
-        await store.refresh(reason: "test")
-        XCTAssertEqual(store.sessionFolders, ["a": "/Users/sam/x"])
-        let report = store.costReport(range: .week)
-        XCTAssertEqual(report.days.count, 7)
-        XCTAssertEqual(report.projects.map(\.folder), ["/Users/sam/x", nil])
-        XCTAssertEqual(report.projects.map(\.totals.tokens), [60, 2])
     }
 
     func testSessionMetaSurvivesTheCache() async throws {

@@ -72,20 +72,18 @@ enum ScreenshotRenderer {
             written.append(file)
         }
 
-        for tab in UsageTab.allCases {
-            installDefaults(tab: tab)
-            try write(menuBar(stores, tab: tab, clock: fixture.clock, appearance: appearance), "menubar-\(tab.rawValue)")
-            try write(try await popover(stores, appearance: appearance), "popover-\(tab.rawValue)")
-        }
+        // The Antigravity tab draws the same surfaces with its own numbers, so the README shows
+        // Claude Code only.
+        let tab = UsageTab.claude
+        installDefaults(tab: tab)
+        try write(menuBar(stores, tab: tab, clock: fixture.clock, appearance: appearance), "menubar-\(tab.rawValue)")
+        try write(try await popover(stores, appearance: appearance), "popover-\(tab.rawValue)")
         try write(try await window(AnyView(SessionsView(tokens: stores.tokens, onRefresh: {}, onOpened: {})),
                                    title: "Claude Code Sessions", size: NSSize(width: 660, height: 380),
                                    appearance: appearance), "sessions")
         try write(try await window(AnyView(CostView(tokens: stores.tokens, onRefresh: {})),
-                                   title: "\(TokenProduct.claudeCode.name) Cost", size: NSSize(width: 520, height: 640),
+                                   title: "\(TokenProduct.claudeCode.name) Cost", size: NSSize(width: 520, height: 520),
                                    appearance: appearance), "cost-claude")
-        try write(try await window(AnyView(CostView(tokens: stores.antigravityTokens, onRefresh: {})),
-                                   title: "\(TokenProduct.antigravity.name) Cost", size: NSSize(width: 520, height: 520),
-                                   appearance: appearance), "cost-antigravity")
         for file in written { print(file + ".png") }
     }
 
@@ -327,7 +325,7 @@ final class SilentNotifier: Notifier {
 /// naturally whenever they are rendered. Deterministic: the same `now` gives the same picture.
 struct ScreenshotFixture {
     var now: Date
-    /// Folders the sessions "ran in", under the renderer's home so the cost window shows `~/...`.
+    /// Folders the sessions "ran in", under the renderer's home; the Sessions window shows `~/...`.
     var home: String = NSHomeDirectory()
 
     let plan = "max"

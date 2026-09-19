@@ -54,10 +54,6 @@ final class RendererTests: XCTestCase {
             XCTAssertNotNil(folder, "record \(record.timestamp) has no session folder")
             XCTAssertTrue(folder?.hasPrefix("/Users/someone/Code/") ?? false)
         }
-        // So the cost window's BY PROJECT list has no "Unknown folder" row.
-        let report = CostReport.build(f.claudeRecords, now: now, folders: folders.compactMapValues { $0 })
-        XCTAssertEqual(report.projects.count, ScreenshotFixture.projects.count)
-        XCTAssertFalse(report.projects.contains { $0.folder == nil })
     }
 
     @MainActor func testRecordsStayInsideTheChartWindow() {

@@ -9,8 +9,6 @@ final class AntigravityTokenStore: TokenLedger {
     private(set) var records: [TokenRecord] = []
     private(set) var lastScanned: Date?
     private(set) var error: String?
-    /// Antigravity conversations are not tied to a folder, so the cost window shows no projects.
-    let sessionFolders: [String: String]? = nil
 
     var scanner = AntigravityTokenScanner()
 

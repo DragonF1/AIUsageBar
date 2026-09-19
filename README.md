@@ -2,22 +2,18 @@
 
 [![CI](https://github.com/DragonF1/AIUsageBar/actions/workflows/ci.yml/badge.svg)](https://github.com/DragonF1/AIUsageBar/actions/workflows/ci.yml)
 
-macOS menu bar app showing your Claude subscription usage (5-hour session, weekly, per-model) with colored progress bars, plus the Anthropic status page incident banner. A second tab shows Google Antigravity's four limits the same way: weekly and five-hour for the Gemini models, weekly and five-hour for the Claude and GPT models, with the same kind of banner fed by Google Cloud's status dashboard. Refreshes every 5 minutes. The menu bar follows the selected tab: `5h% / weekly%` next to the Claude starburst, or the Gemini group's `5h% / weekly%` next to the Antigravity arch, with the icon colored by whichever bar is closer to its cap (or by the window you pick). Both tabs also count the tokens the product spent on this Mac (today, this week, last 30 days, with a list-price estimate) from its local files, and open a cost window with a daily chart over 7, 30 or 90 days and a split by model and, for Claude Code, by project folder. Every row carries a pace forecast, and macOS notifications warn when a window passes a threshold, runs out, is on a pace to run out, or resets after a warning.
+macOS menu bar app showing your Claude subscription usage (5-hour session, weekly, per-model) with colored progress bars, plus the Anthropic status page incident banner. A second tab shows Google Antigravity's four limits the same way: weekly and five-hour for the Gemini models, weekly and five-hour for the Claude and GPT models, with the same kind of banner fed by Google Cloud's status dashboard. Refreshes every 5 minutes. The menu bar follows the selected tab: `5h% / weekly%` next to the Claude starburst, or the Gemini group's `5h% / weekly%` next to the Antigravity arch, with the icon colored by whichever bar is closer to its cap (or by the window you pick). Both tabs also count the tokens the product spent on this Mac (today, this week, last 30 days, with a list-price estimate) from its local files, and open a cost window with a daily chart over 7, 30 or 90 days and a split by model. Every row carries a pace forecast, and macOS notifications warn when a window passes a threshold, runs out, is on a pace to run out, or resets after a warning.
 
 No cookie scraping. It reads the OAuth token Claude Code already keeps in your Keychain and asks Anthropic's usage endpoint directly, the same data `claude /usage` shows.
 
 ## Screenshots
 
-The menu bar item on either tab, and the popover behind it:
+The menu bar item and the popover behind it (the Antigravity tab draws the same surfaces with its own numbers):
 
 <p>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/menubar-claude-dark.png">
   <img src="docs/screenshots/menubar-claude-light.png" width="310" alt="Menu bar with the Claude starburst, 34% / 58%">
-</picture>
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/menubar-antigravity-dark.png">
-  <img src="docs/screenshots/menubar-antigravity-light.png" width="310" alt="Menu bar with the Antigravity arch, 12% / 31%">
 </picture>
 </p>
 <p>
@@ -25,13 +21,9 @@ The menu bar item on either tab, and the popover behind it:
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/popover-claude-dark.png">
   <img src="docs/screenshots/popover-claude-light.png" width="300" alt="Claude Code tab: 5-hour, weekly and Opus bars with pace lines, extra usage, cost rows, sessions, status card">
 </picture>
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/popover-antigravity-dark.png">
-  <img src="docs/screenshots/popover-antigravity-light.png" width="300" alt="Antigravity tab: Gemini and Claude/GPT weekly and 5-hour bars, cost rows, Google Cloud status card">
-</picture>
 </p>
 
-The sessions window and the two cost windows:
+The sessions window and the cost window:
 
 <p>
 <picture>
@@ -42,11 +34,7 @@ The sessions window and the two cost windows:
 <p>
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/cost-claude-dark.png">
-  <img src="docs/screenshots/cost-claude-light.png" width="520" alt="Claude Code Cost window: 30-day bar chart, totals, by model, by project">
-</picture>
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/cost-antigravity-dark.png">
-  <img src="docs/screenshots/cost-antigravity-light.png" width="520" alt="Antigravity Cost window: 30-day bar chart, totals, by model">
+  <img src="docs/screenshots/cost-claude-light.png" width="520" alt="Claude Code Cost window: 30-day bar chart, totals, by model">
 </picture>
 </p>
 
@@ -140,7 +128,7 @@ A "Cost" section under the usage bars on the Claude tab: three single-line rows,
 
 ## Cost window
 
-The "Cost" header on either tab opens a separate window for that product with the last 7, 30 or 90 days (a segmented picker in the header, remembered between opens, 30 by default): today's cost and tokens, the range's cost and tokens, the range's tokens by kind (input, output, cache write, cache read; hover one for its share), a bar per calendar day (hover a bar for that day's cost and tokens; the line under the chart otherwise names the busiest day), the same days split by model, costliest first, and on the Claude Code window the same days split by project, meaning the folder each session ran in (the first eight, then "Show all"; hover a row for the full path). Every figure is the list-price estimate the popover rows use. Esc or ⌘W closes it; it refreshes every 15 s while open. The Claude Code and Antigravity windows are separate and remember their own positions.
+The "Cost" header on either tab opens a separate window for that product with the last 7, 30 or 90 days (a segmented picker in the header, remembered between opens, 30 by default): today's cost and tokens, the range's cost and tokens, the range's tokens by kind (input, output, cache write, cache read; hover one for its share), a bar per calendar day (hover a bar for that day's cost and tokens; the line under the chart otherwise names the busiest day), the same days split by model, costliest first. Every figure is the list-price estimate the popover rows use. Esc or ⌘W closes it; it refreshes every 15 s while open. The Claude Code and Antigravity windows are separate and remember their own positions.
 
 ## Sessions window
 

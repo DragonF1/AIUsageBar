@@ -199,7 +199,7 @@ struct PopoverView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Cost")
-        .help("Open a window with a bar per day for the last 7, 30 or 90 days and the split by model and project")
+        .help("Open a window with a bar per day for the last 7, 30 or 90 days and the split by model")
     }
 
     /// One line that opens the sessions window; the counts come from Claude Code's session registry.

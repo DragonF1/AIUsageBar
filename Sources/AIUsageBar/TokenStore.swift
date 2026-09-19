@@ -77,9 +77,6 @@ final class TokenStore: TokenLedger {
             ?? calendar.startOfDay(for: now)
     }
 
-    /// Every retained session that said where it ran.
-    var sessionFolders: [String: String]? { sessions.compactMapValues(\.cwd) }
-
     var openCount: Int { live.count }
     var busyCount: Int { live.filter(\.isBusy).count }
 

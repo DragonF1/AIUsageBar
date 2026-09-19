@@ -11,9 +11,6 @@ protocol TokenLedger: AnyObject, Observable {
     var records: [TokenRecord] { get }
     var lastScanned: Date? { get }
     var error: String? { get }
-    /// Session id -> the folder that session ran in, for the cost window's By project rows;
-    /// nil when the product has no folders to speak of.
-    var sessionFolders: [String: String]? { get }
     func refresh(reason: String) async
 }
 
@@ -23,7 +20,7 @@ extension TokenLedger {
     }
 
     func costReport(now: Date = Date(), range: CostRange = .month) -> CostReport {
-        CostReport.build(records, now: now, dayCount: range.days, folders: sessionFolders)
+        CostReport.build(records, now: now, dayCount: range.days)
     }
 }
 
