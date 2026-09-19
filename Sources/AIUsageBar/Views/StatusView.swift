@@ -28,6 +28,10 @@ struct StatusView: View {
                 Circle().fill(indicatorColor(indicator)).frame(width: 8, height: 8).padding(.top, 5)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(summary.status?.description ?? "Status").font(.subheadline.weight(.medium))
+                    // Both lines stay when the card is folded, so a glance still says how much is wrong.
+                    if let count = summary.incidentCount {
+                        Text(count).font(.caption).foregroundStyle(indicatorColor(indicator))
+                    }
                     let affected = summary.affectedNames
                     if !affected.isEmpty {
                         Text("Affects: \(affected)").font(.caption).foregroundStyle(.secondary)
@@ -109,6 +113,19 @@ struct StatusView: View {
             }
             if let body = i.latestBody, !body.isEmpty {
                 Text(body).font(.caption).foregroundStyle(.primary.opacity(0.85)).fixedSize(horizontal: false, vertical: true)
+            }
+            if !i.affected.isEmpty {
+                HStack(spacing: 4) {
+                    ForEach(i.components ?? []) { c in
+                        HStack(spacing: 3) {
+                            Circle().fill(componentColor(c.status)).frame(width: 5, height: 5)
+                            Text(c.name ?? "").font(.caption2)
+                        }
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(Capsule().fill(Color.primary.opacity(0.06)))
+                    }
+                }
+                .foregroundStyle(.secondary)
             }
         }
         .padding(10)

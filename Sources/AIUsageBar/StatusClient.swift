@@ -88,6 +88,15 @@ struct StatusSummary: Codable, Equatable {
         let names = (components ?? []).filter { $0.status != "operational" }.compactMap(\.name)
         return names.joined(separator: ", ")
     }
+
+    /// "1 active incident", "2 active incidents, 1 scheduled maintenance"; nil when there is nothing.
+    var incidentCount: String? {
+        func plural(_ n: Int, _ noun: String) -> String { "\(n) \(noun)\(n == 1 ? "" : "s")" }
+        var parts: [String] = []
+        if let n = incidents?.count, n > 0 { parts.append(plural(n, "active incident")) }
+        if let n = scheduledMaintenances?.count, n > 0 { parts.append(plural(n, "scheduled maintenance")) }
+        return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
 }
 
 /// A public status page the popover can summarise: Anthropic's for the Claude tab, Google

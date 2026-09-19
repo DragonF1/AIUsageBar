@@ -353,7 +353,20 @@ final class StatusTests: XCTestCase {
 
     func testAllClear() throws {
         let data = #"{"status":{"indicator":"none","description":"All Systems Operational"},"components":[],"incidents":[]}"#.data(using: .utf8)!
-        XCTAssertTrue(try UsageClient.decoder.decode(StatusSummary.self, from: data).isAllClear)
+        let s = try UsageClient.decoder.decode(StatusSummary.self, from: data)
+        XCTAssertTrue(s.isAllClear)
+        XCTAssertNil(s.incidentCount)
+    }
+
+    func testIncidentCountWording() throws {
+        var s = try UsageClient.decoder.decode(StatusSummary.self, from: sample)
+        XCTAssertEqual(s.incidentCount, "1 active incident")
+        let one = s.incidents![0]
+        s.incidents?.append(one)
+        s.scheduledMaintenances = [one]
+        XCTAssertEqual(s.incidentCount, "2 active incidents, 1 scheduled maintenance")
+        s.incidents = []
+        XCTAssertEqual(s.incidentCount, "1 scheduled maintenance")
     }
 
     func testRelativeText() {
