@@ -198,7 +198,8 @@ enum ScreenshotRenderer {
                                onShowSessions: {}, onShowCost: {}, onShowAntigravityCost: {}, onQuit: {})
         let hosting = NSHostingController(rootView: view)
         hosting.sizingOptions = [.preferredContentSize]
-        let window = NSWindow(contentViewController: hosting)
+        // Key, like the real popover: an inactive window draws the progress bars grey.
+        let window = KeyableWindow(contentViewController: hosting)
         window.styleMask = [.borderless]
         window.isReleasedWhenClosed = false
         window.backgroundColor = .windowBackgroundColor
@@ -208,7 +209,8 @@ enum ScreenshotRenderer {
         if let screen = NSScreen.main {
             window.setFrameTopLeftPoint(NSPoint(x: screen.visibleFrame.maxX - 340, y: screen.visibleFrame.maxY - 8))
         }
-        window.orderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
         try await Task.sleep(for: settle)
         // The view is 300 pt wide and hugs its height; the window follows once SwiftUI has laid out.
         window.setContentSize(hosting.view.fittingSize)
@@ -219,6 +221,11 @@ enum ScreenshotRenderer {
                           background: nil, border: true)
         window.orderOut(nil)
         return rep
+    }
+
+    /// Borderless windows refuse key status by default.
+    private final class KeyableWindow: NSWindow {
+        override var canBecomeKey: Bool { true }
     }
 
     /// A titled window like `TokenWindowController` makes, without the frame autosave.
@@ -348,10 +355,12 @@ struct ScreenshotFixture {
     // MARK: Claude usage
 
     /// Three polls: three hours ago, 45 minutes ago and now, rising so both windows forecast.
+    /// The rows land one per colour band (green, yellow, light red) so the screenshots show
+    /// the scale.
     var claudeSamples: [(at: Date, response: UsageResponse)] {
-        [(now.addingTimeInterval(-3 * 3600), claudeUsage(session: 18, weekly: 55, opus: 40)),
-         (now.addingTimeInterval(-45 * 60), claudeUsage(session: 29, weekly: 57, opus: 40.6)),
-         (now, claudeUsage(session: 34, weekly: 58, opus: 41))]
+        [(now.addingTimeInterval(-3 * 3600), claudeUsage(session: 18, weekly: 75, opus: 86)),
+         (now.addingTimeInterval(-45 * 60), claudeUsage(session: 29, weekly: 77, opus: 86.4)),
+         (now, claudeUsage(session: 34, weekly: 78, opus: 87))]
     }
 
     var claudeUsage: UsageResponse { claudeSamples.last!.response }

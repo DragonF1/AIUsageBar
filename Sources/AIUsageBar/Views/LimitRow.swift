@@ -11,10 +11,11 @@ struct LimitRow: View {
 
     private var tint: Color {
         guard let percent else { return .secondary }
-        switch UsageColor.level(for: percent) {
-        case .low: return .green
-        case .medium: return .yellow
-        case .high: return .red
+        switch UsageColor.rowIcon(percent) {
+        case .green: return .green
+        case .yellow: return .yellow
+        case .lightRed: return Color(nsColor: UsageColor.lightRed)
+        case .darkRed: return Color(nsColor: UsageColor.darkRed)
         }
     }
 

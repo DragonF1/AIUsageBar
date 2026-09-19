@@ -263,18 +263,13 @@ struct MenuBarTitle {
         stale = isStale || tint == nil
     }
 
-    // Weekly-window reds, either side of systemRed so the three stay tellable apart.
-    static let lightRed = NSColor(srgbRed: 1.0, green: 0.52, blue: 0.5, alpha: 1)
-    static let darkRed = NSColor(srgbRed: 0.62, green: 0.05, blue: 0.09, alpha: 1)
-
     var iconColor: NSColor {
         switch stale ? nil : tint {
         case nil: return .secondaryLabelColor
         case .green: return .systemGreen
         case .yellow: return .systemYellow
-        case .red: return .systemRed
-        case .lightRed: return Self.lightRed
-        case .darkRed: return Self.darkRed
+        case .lightRed: return UsageColor.lightRed
+        case .darkRed: return UsageColor.darkRed
         }
     }
 

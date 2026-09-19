@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Observation
 
@@ -141,50 +142,50 @@ final class UsageStore {
     }()
 }
 
-/// Green / yellow / red thresholds, shared by the menu bar title and the rows.
+/// Green / yellow / light red / dark red thresholds, shared by the menu bar icon and the rows:
+/// green under 75%, yellow from 75, light red from 85, dark red from 95.
 enum UsageColor {
-    enum Level { case low, medium, high }
+    enum Level { case low, medium, high, critical }
 
     static func level(for percent: Double) -> Level {
         switch percent {
-        case ..<50: return .low
-        case ..<80: return .medium
-        default: return .high
+        case ..<75: return .low
+        case ..<85: return .medium
+        case ..<95: return .high
+        default: return .critical
         }
     }
 
-    /// Menu bar icon tint. `red` is the 5-hour window's high level; `lightRed` and
-    /// `darkRed` only ever come from the weekly window.
-    enum Icon: Equatable { case green, yellow, red, lightRed, darkRed }
+    /// Menu bar icon tint, one colour per level.
+    enum Icon: Equatable { case green, yellow, lightRed, darkRed }
 
-    /// `auto`: the icon follows the 5-hour window (green / yellow / red at the row
-    /// thresholds), except that a weekly window at 85% or more takes over so a
-    /// nearly spent week is never hidden behind a fresh session: yellow from 85,
-    /// light red from 95, dark red at 100. `session` and `weekly` follow that one
-    /// window alone at the row thresholds (weekly still goes dark red at 100).
-    /// Nil when there is nothing to colour.
+    // The two reds sit either side of systemRed so they stay tellable apart from each
+    // other and from yellow, in the menu bar and on the bars alike.
+    static let lightRed = NSColor(srgbRed: 1.0, green: 0.52, blue: 0.5, alpha: 1)
+    static let darkRed = NSColor(srgbRed: 0.62, green: 0.05, blue: 0.09, alpha: 1)
+
+    /// `auto`: the icon follows the 5-hour window, except that a weekly window at 85% or
+    /// more takes over so a nearly spent week is never hidden behind a fresh session.
+    /// `session` and `weekly` follow that one window alone. Nil when there is nothing to
+    /// colour.
     static func icon(session: Double?, weekly: Double?, metric: MenuBarMetric = .auto) -> Icon? {
         switch metric {
         case .auto:
-            if let weekly, weekly >= 85 {
-                if weekly >= 100 { return .darkRed }
-                if weekly >= 95 { return .lightRed }
-                return .yellow
-            }
+            if let weekly, weekly >= 85 { return rowIcon(weekly) }
             return session.map(rowIcon)
         case .session:
             return session.map(rowIcon)
         case .weekly:
-            guard let weekly else { return nil }
-            return weekly >= 100 ? .darkRed : rowIcon(weekly)
+            return weekly.map(rowIcon)
         }
     }
 
-    private static func rowIcon(_ percent: Double) -> Icon {
+    static func rowIcon(_ percent: Double) -> Icon {
         switch level(for: percent) {
         case .low: return .green
         case .medium: return .yellow
-        case .high: return .red
+        case .high: return .lightRed
+        case .critical: return .darkRed
         }
     }
 }

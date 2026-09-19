@@ -385,24 +385,26 @@ final class QuotaMonitorTests: XCTestCase {
 final class PreferenceModelTests: XCTestCase {
     func testIconMetricSessionIgnoresTheWeek() {
         XCTAssertEqual(UsageColor.icon(session: 10, weekly: 99, metric: .session), .green)
-        XCTAssertEqual(UsageColor.icon(session: 60, weekly: 100, metric: .session), .yellow)
-        XCTAssertEqual(UsageColor.icon(session: 80, weekly: 0, metric: .session), .red)
+        XCTAssertEqual(UsageColor.icon(session: 75, weekly: 100, metric: .session), .yellow)
+        XCTAssertEqual(UsageColor.icon(session: 85, weekly: 0, metric: .session), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 95, weekly: 0, metric: .session), .darkRed)
         XCTAssertNil(UsageColor.icon(session: nil, weekly: 99, metric: .session))
     }
 
     func testIconMetricWeeklyIgnoresTheSession() {
         XCTAssertEqual(UsageColor.icon(session: 99, weekly: 10, metric: .weekly), .green)
-        XCTAssertEqual(UsageColor.icon(session: 99, weekly: 50, metric: .weekly), .yellow)
-        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 80, metric: .weekly), .red)
-        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 99.9, metric: .weekly), .red)
+        XCTAssertEqual(UsageColor.icon(session: 99, weekly: 75, metric: .weekly), .yellow)
+        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 85, metric: .weekly), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 94.9, metric: .weekly), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 95, metric: .weekly), .darkRed)
         XCTAssertEqual(UsageColor.icon(session: 0, weekly: 100, metric: .weekly), .darkRed)
         XCTAssertNil(UsageColor.icon(session: 50, weekly: nil, metric: .weekly))
     }
 
     func testIconMetricAutoIsTheOriginalRule() {
         XCTAssertEqual(UsageColor.icon(session: 10, weekly: 84.9, metric: .auto), .green)
-        XCTAssertEqual(UsageColor.icon(session: 10, weekly: 85, metric: .auto), .yellow)
-        XCTAssertEqual(UsageColor.icon(session: 10, weekly: 95, metric: .auto), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 10, weekly: 85, metric: .auto), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 10, weekly: 95, metric: .auto), .darkRed)
     }
 
     func testMetricRoundTripsThroughItsRawValue() {

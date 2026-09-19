@@ -84,27 +84,39 @@ final class ModelTests: XCTestCase {
     }
 
     func testColorThresholds() {
-        XCTAssertEqual(UsageColor.level(for: 49), .low)
-        XCTAssertEqual(UsageColor.level(for: 50), .medium)
-        XCTAssertEqual(UsageColor.level(for: 80), .high)
+        XCTAssertEqual(UsageColor.level(for: 0), .low)
+        XCTAssertEqual(UsageColor.level(for: 74.9), .low)
+        XCTAssertEqual(UsageColor.level(for: 75), .medium)
+        XCTAssertEqual(UsageColor.level(for: 84.9), .medium)
+        XCTAssertEqual(UsageColor.level(for: 85), .high)
+        XCTAssertEqual(UsageColor.level(for: 94.9), .high)
+        XCTAssertEqual(UsageColor.level(for: 95), .critical)
+        XCTAssertEqual(UsageColor.level(for: 100), .critical)
+    }
+
+    func testRowIconMatchesTheLevels() {
+        XCTAssertEqual(UsageColor.rowIcon(50), .green)
+        XCTAssertEqual(UsageColor.rowIcon(75), .yellow)
+        XCTAssertEqual(UsageColor.rowIcon(85), .lightRed)
+        XCTAssertEqual(UsageColor.rowIcon(95), .darkRed)
     }
 
     func testIconFollowsSessionBelowWeeklyCutoff() {
         XCTAssertEqual(UsageColor.icon(session: 10, weekly: 84.9), .green)
-        XCTAssertEqual(UsageColor.icon(session: 50, weekly: 0), .yellow)
-        XCTAssertEqual(UsageColor.icon(session: 80, weekly: 0), .red)
+        XCTAssertEqual(UsageColor.icon(session: 75, weekly: 0), .yellow)
+        XCTAssertEqual(UsageColor.icon(session: 85, weekly: 0), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 95, weekly: 0), .darkRed)
         XCTAssertNil(UsageColor.icon(session: nil, weekly: 50))
         XCTAssertNil(UsageColor.icon(session: nil, weekly: nil))
     }
 
     func testIconFollowsWeeklyFrom85() {
-        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 85), .yellow)
-        XCTAssertEqual(UsageColor.icon(session: 99, weekly: 85), .yellow)
-        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 94.9), .yellow)
-        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 95), .lightRed)
-        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 99.9), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 85), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 99, weekly: 85), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 94.9), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 95), .darkRed)
         XCTAssertEqual(UsageColor.icon(session: 0, weekly: 100), .darkRed)
-        XCTAssertEqual(UsageColor.icon(session: nil, weekly: 90), .yellow)
+        XCTAssertEqual(UsageColor.icon(session: nil, weekly: 90), .lightRed)
     }
 }
 

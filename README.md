@@ -90,7 +90,7 @@ Under the popover's header, a segmented switch with each product's mark next to 
 - Notifications: on by default. One notification per window per poll, and each kind once per cycle: "at 82%" when a threshold is first passed (a jump past two thresholds posts once, for the higher one), "used up" at 100%, "running out" when the pace forecast lands before the reset, and "reset" when a window that got any of those warnings starts over. Turning the switch off keeps tracking silently, so nothing that happened while it was off is replayed when it comes back on.
 - Start at login: on by default.
 - Extra usage credits: on by default. Shows the month's extra-usage credits as one more row under the Claude bars ("Extra usage", "$12.40 of $50.00 this month", bar at the percent spent) and warns on them at the same thresholds. The row only appears for an account that has extra usage enabled on claude.ai; the credits are account-wide, not per model, and the endpoint gives no reset date, so this row never has a pace forecast. Off hides the row and stops the warnings.
-- Menu bar tint: Auto (the 5-hour window, or the weekly one once it reaches 85%), 5-hour window, or Weekly window. This picks which window colors the icon; the numbers next to it do not change.
+- Menu bar tint: Auto (the 5-hour window, or the weekly one once it reaches 85%), 5-hour window, or Weekly window. This picks which window colors the icon; the numbers next to it do not change. The bars and the icon share one scale: green under 75%, yellow from 75, light red from 85, dark red from 95.
 
 ## Pace forecast
 
