@@ -7,24 +7,27 @@ final class StatusItemController: NSObject {
     private let antigravity: AntigravityStore
     private let status: StatusStore
     private let tokens: TokenStore
+    private let monitor: QuotaMonitor
     private let item: NSStatusItem
     private let popover = NSPopover()
     private let sessionsWindow: SessionsWindowController
     private var observation: Task<Void, Never>?
     private var outsideClickMonitor: Any?
 
-    init(store: UsageStore, antigravity: AntigravityStore, status: StatusStore, tokens: TokenStore) {
+    init(store: UsageStore, antigravity: AntigravityStore, status: StatusStore, tokens: TokenStore, monitor: QuotaMonitor) {
         self.store = store
         self.antigravity = antigravity
         self.status = status
         self.tokens = tokens
+        self.monitor = monitor
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         sessionsWindow = SessionsWindowController(tokens: tokens)
         super.init()
 
         popover.behavior = .transient
         popover.animates = true
-        let hosting = NSHostingController(rootView: PopoverView(store: store, antigravity: antigravity, status: status, tokens: tokens,
+        let hosting = NSHostingController(rootView: PopoverView(store: store, antigravity: antigravity, status: status,
+                                                                tokens: tokens, monitor: monitor,
                                                                 onShowSessions: { [weak self] in self?.showSessions() },
                                                                 onQuit: { NSApp.terminate(nil) }))
         // Content grows when the status banner or rows arrive after the popover is open;
@@ -38,7 +41,7 @@ final class StatusItemController: NSObject {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         observeStore()
-        // The tab picker writes UserDefaults; the menu bar follows the selected tab.
+        // The tab picker and the menu's tint switch write UserDefaults; the menu bar follows both.
         NotificationCenter.default.addObserver(self, selector: #selector(render),
                                                name: UserDefaults.didChangeNotification, object: nil)
         render()
@@ -71,17 +74,19 @@ final class StatusItemController: NSObject {
         // live in the popover only.
         // Leading space pads the gap between the icon and the numbers.
         let tab = UsageTab.current
+        let metric = Preferences.menuBarMetric
         let text: String
         let tint: UsageColor.Icon?
         let stale: Bool
         switch tab {
         case .claude:
             text = " \(pct(store.sessionPercent)) / \(pct(store.weeklyPercent))"
-            tint = UsageColor.icon(session: store.sessionPercent, weekly: store.weeklyPercent)
+            tint = UsageColor.icon(session: store.sessionPercent, weekly: store.weeklyPercent, metric: metric)
             stale = store.isStale || tint == nil
         case .antigravity:
             text = " \(pct(antigravity.geminiSessionPercent)) / \(pct(antigravity.geminiWeeklyPercent))"
-            tint = UsageColor.icon(session: antigravity.geminiSessionPercent, weekly: antigravity.geminiWeeklyPercent)
+            tint = UsageColor.icon(session: antigravity.geminiSessionPercent, weekly: antigravity.geminiWeeklyPercent,
+                                   metric: metric)
             stale = antigravity.isStale || tint == nil
         }
         let color: NSColor
@@ -159,14 +164,63 @@ final class StatusItemController: NSObject {
         if popover.isShown { popover.performClose(nil) }
     }
 
+    /// Built fresh on every right click so the check marks read the current switches.
     private func showMenu() {
         let menu = NSMenu()
         menu.addItem(withTitle: "Refresh now", action: #selector(refreshNow), keyEquivalent: "r").target = self
+        menu.addItem(.separator())
+
+        let notifications = menu.addItem(withTitle: "Notifications", action: #selector(toggleNotifications), keyEquivalent: "")
+        notifications.target = self
+        notifications.state = Preferences.notifications ? .on : .off
+        notifications.toolTip = "Warns when a window passes \(Self.thresholdText(monitor.thresholds)), is used up, "
+            + "resets after a warning, or is on a pace to run out before its reset."
+
+        let login = menu.addItem(withTitle: "Start at login", action: #selector(toggleStartAtLogin), keyEquivalent: "")
+        login.target = self
+        login.state = Preferences.startAtLogin ? .on : .off
+
+        let tint = NSMenuItem(title: "Menu bar tint", action: nil, keyEquivalent: "")
+        let choices = NSMenu()
+        for metric in MenuBarMetric.allCases {
+            let choice = choices.addItem(withTitle: metric.title, action: #selector(pickMetric(_:)), keyEquivalent: "")
+            choice.target = self
+            choice.representedObject = metric.rawValue
+            choice.state = metric == Preferences.menuBarMetric ? .on : .off
+        }
+        tint.submenu = choices
+        menu.addItem(tint)
+
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit AI Usage Bar", action: #selector(quit), keyEquivalent: "q").target = self
         item.menu = menu
         item.button?.performClick(nil)
         item.menu = nil   // so left click keeps going to the popover
+    }
+
+    /// "80% or 95%", "90%", or "no threshold" when config.json emptied the list.
+    static func thresholdText(_ thresholds: [Double]) -> String {
+        let parts = thresholds.map { "\(Int($0))%" }
+        switch parts.count {
+        case 0: return "no threshold"
+        case 1: return parts[0]
+        default: return parts.dropLast().joined(separator: ", ") + " or " + parts.last!
+        }
+    }
+
+    @objc private func toggleNotifications() {
+        Preferences.notifications.toggle()
+        if Preferences.notifications { monitor.notifier.requestAuthorization() }
+    }
+
+    @objc private func toggleStartAtLogin() {
+        Preferences.startAtLogin.toggle()
+        LoginItem.apply(Preferences.startAtLogin)
+    }
+
+    @objc private func pickMetric(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let metric = MenuBarMetric(rawValue: raw) else { return }
+        Preferences.menuBarMetric = metric
     }
 
     @objc private func refreshNow() {
@@ -176,6 +230,7 @@ final class StatusItemController: NSObject {
             await tokens.refresh(reason: "menu")
         }
     }
+
     @objc private func quit() { NSApp.terminate(nil) }
 }
 

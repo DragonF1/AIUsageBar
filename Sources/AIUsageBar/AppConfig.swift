@@ -10,7 +10,8 @@ enum AppConfig {
 
     /// `config.json`:
     /// `{"claude": {"refresh": true},
-    ///   "resume": {"launcher": "~/bin/my-claude.sh", "env_file": "~/bin/my-claude.env"}}`
+    ///   "resume": {"launcher": "~/bin/my-claude.sh", "env_file": "~/bin/my-claude.env"},
+    ///   "notifications": {"thresholds": [80, 95]}}`
     struct Settings: Codable, Equatable {
         struct Claude: Codable, Equatable {
             /// Let the app run Claude Code's refresh-token flow and write the new tokens into
@@ -26,10 +27,23 @@ enum AppConfig {
             /// `KEY=value` file exported into the launcher's environment before it runs.
             var envFile: String?
         }
+        struct Notifications: Codable, Equatable {
+            /// Percentages at which a window's rising usage posts a warning. Absent means the
+            /// built-in 80 and 95; an empty list turns the threshold warnings off and leaves
+            /// the used-up, reset and pace notifications alone.
+            var thresholds: [Double]?
+        }
         var claude: Claude?
         var resume: Resume?
+        var notifications: Notifications?
 
         var refreshesClaudeToken: Bool { claude?.refresh ?? false }
+
+        /// Sorted, deduplicated, and only values a percentage can rise past.
+        var notificationThresholds: [Double] {
+            guard let thresholds = notifications?.thresholds else { return QuotaMonitor.defaultThresholds }
+            return Array(Set(thresholds.filter { $0 > 0 && $0 < 100 })).sorted()
+        }
     }
 
     /// `antigravity-client.json`: `{"client_id": "...", "client_secret": "..."}`, the OAuth client

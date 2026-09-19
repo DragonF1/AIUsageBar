@@ -4,6 +4,7 @@ struct LimitRow: View {
     let title: String
     let percent: Double?
     let detail: String?
+    var pace: PaceLine? = nil
     var dimmed = false
 
     private var clamped: Double { min(100, max(0, percent ?? 0)) }
@@ -30,6 +31,9 @@ struct LimitRow: View {
                 .tint(tint)
             if let detail {
                 Text(detail).font(.caption).foregroundStyle(.secondary)
+            }
+            if let pace {
+                Text(pace.text).font(.caption).foregroundStyle(pace.urgent ? Color.orange : Color.secondary)
             }
         }
         .opacity(dimmed ? 0.55 : 1)

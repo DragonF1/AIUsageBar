@@ -4,6 +4,7 @@ import SwiftUI
 /// Claude and GPT group) drawn with the same bars as the Claude tab, as percent used.
 struct AntigravityTab: View {
     var store: AntigravityStore
+    var monitor: QuotaMonitor
     var now: Date
 
     var body: some View {
@@ -16,32 +17,16 @@ struct AntigravityTab: View {
                 ForEach(Array(groups.enumerated()), id: \.element.id) { index, group in
                     if index > 0 { Divider() }
                     ForEach(group.buckets) { bucket in
-                        LimitRow(title: title(group: group, bucket: bucket),
+                        let reading = QuotaReading.antigravity(group: group, bucket: bucket)
+                        LimitRow(title: reading.name,
                                  percent: bucket.percentUsed,
                                  detail: bucket.detail(now: now),
+                                 pace: monitor.paceLine(for: reading.id, window: reading.window, now: now),
                                  dimmed: store.isStale)
                     }
                 }
             }
         }
-    }
-
-    /// "Gemini 5h" / "Gemini weekly" / "Claude and GPT 5h" / "Claude and GPT weekly".
-    private func title(group: AntigravityUsage.Group, bucket: AntigravityUsage.Bucket) -> String {
-        let window: String
-        switch bucket.window {
-        case "5h": window = "5h"
-        case "weekly": window = "weekly"
-        default: window = bucket.title.replacingOccurrences(of: " Limit Remaining", with: "").lowercased()
-        }
-        return "\(shortGroup(group.title)) \(window)"
-    }
-
-    /// "Gemini Models" -> "Gemini", "Claude and GPT models" -> "Claude and GPT".
-    private func shortGroup(_ title: String) -> String {
-        var s = title
-        for suffix in [" Models", " models"] where s.hasSuffix(suffix) { s.removeLast(suffix.count) }
-        return s
     }
 
     private var emptyText: String {
@@ -50,7 +35,27 @@ struct AntigravityTab: View {
     }
 }
 
+extension AntigravityUsage.Group {
+    /// "Gemini Models" -> "Gemini", "Claude and GPT models" -> "Claude and GPT".
+    var shortTitle: String {
+        var s = title
+        for suffix in [" Models", " models"] where s.hasSuffix(suffix) { s.removeLast(suffix.count) }
+        return s
+    }
+}
+
 extension AntigravityUsage.Bucket {
+    /// "Gemini 5h" / "Gemini weekly" / "Claude and GPT 5h" / "Claude and GPT weekly".
+    func rowTitle(in group: AntigravityUsage.Group) -> String {
+        let window: String
+        switch self.window {
+        case "5h": window = "5h"
+        case "weekly": window = "weekly"
+        default: window = title.replacingOccurrences(of: " Limit Remaining", with: "").lowercased()
+        }
+        return "\(group.shortTitle) \(window)"
+    }
+
     /// The reset time, worded like the Claude rows. Google's own sentence is deliberately not
     /// shown. An idle 5-hour row says so instead of counting down a reset that moves with every poll.
     func detail(now: Date) -> String? {

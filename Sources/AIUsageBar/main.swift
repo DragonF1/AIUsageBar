@@ -8,18 +8,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let antigravity = AntigravityStore()
     private let status = StatusStore()
     private let tokens = TokenStore()
+    private let monitor = QuotaMonitor(notifier: UserNotifier(),
+                                       thresholds: AppConfig.loadSettings().notificationThresholds)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        controller = StatusItemController(store: store, antigravity: antigravity, status: status, tokens: tokens)
+        store.monitor = monitor
+        antigravity.monitor = monitor
+        controller = StatusItemController(store: store, antigravity: antigravity, status: status, tokens: tokens, monitor: monitor)
         store.start()
         antigravity.start()
         status.start()
         tokens.start()
-        // Always a login item; re-registers if it was switched off in System Settings.
-        if SMAppService.mainApp.status != .enabled {
-            try? SMAppService.mainApp.register()
-        }
+        // The login item follows the menu switch (on by default); re-registers if it was
+        // switched off in System Settings while the switch stayed on.
+        LoginItem.apply(Preferences.startAtLogin)
+        if Preferences.notifications { monitor.notifier.requestAuthorization() }
     }
 }
 

@@ -14,6 +14,8 @@ final class AntigravityStore {
 
     var client = AntigravityClient()
     var auth = AntigravityAuth()
+    /// Told about every successful poll, for the pace lines and the notifications.
+    var monitor: QuotaMonitor?
 
     private var timer: Timer?
     private var backoffUntil: Date?
@@ -102,6 +104,7 @@ final class AntigravityStore {
         state = .ok
         backoffUntil = nil
         saveCache()
+        monitor?.observe(next.readings, now: lastUpdated ?? Date())
     }
 
     // MARK: - derived

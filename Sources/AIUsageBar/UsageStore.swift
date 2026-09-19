@@ -21,6 +21,8 @@ final class UsageStore {
     var client = UsageClient()
     var refresher = OAuthRefresher()
     var store = CredentialStore()
+    /// Told about every successful poll, for the pace lines and the notifications.
+    var monitor: QuotaMonitor?
 
     private var timer: Timer?
     private var backoffUntil: Date?
@@ -82,6 +84,7 @@ final class UsageStore {
         state = .ok
         backoffUntil = nil
         saveCache()
+        monitor?.observe(response.readings, now: lastUpdated ?? Date())
     }
 
     // MARK: - derived
@@ -145,18 +148,31 @@ enum UsageColor {
     /// `darkRed` only ever come from the weekly window.
     enum Icon: Equatable { case green, yellow, red, lightRed, darkRed }
 
-    /// The icon follows the 5-hour window (green / yellow / red at the row
+    /// `auto`: the icon follows the 5-hour window (green / yellow / red at the row
     /// thresholds), except that a weekly window at 85% or more takes over so a
     /// nearly spent week is never hidden behind a fresh session: yellow from 85,
-    /// light red from 95, dark red at 100. Nil when there is nothing to colour.
-    static func icon(session: Double?, weekly: Double?) -> Icon? {
-        if let weekly, weekly >= 85 {
-            if weekly >= 100 { return .darkRed }
-            if weekly >= 95 { return .lightRed }
-            return .yellow
+    /// light red from 95, dark red at 100. `session` and `weekly` follow that one
+    /// window alone at the row thresholds (weekly still goes dark red at 100).
+    /// Nil when there is nothing to colour.
+    static func icon(session: Double?, weekly: Double?, metric: MenuBarMetric = .auto) -> Icon? {
+        switch metric {
+        case .auto:
+            if let weekly, weekly >= 85 {
+                if weekly >= 100 { return .darkRed }
+                if weekly >= 95 { return .lightRed }
+                return .yellow
+            }
+            return session.map(rowIcon)
+        case .session:
+            return session.map(rowIcon)
+        case .weekly:
+            guard let weekly else { return nil }
+            return weekly >= 100 ? .darkRed : rowIcon(weekly)
         }
-        guard let session else { return nil }
-        switch level(for: session) {
+    }
+
+    private static func rowIcon(_ percent: Double) -> Icon {
+        switch level(for: percent) {
         case .low: return .green
         case .medium: return .yellow
         case .high: return .red
@@ -182,6 +198,16 @@ enum ResetText {
             let month = monthFormatter.string(from: date)
             let day = ordinal(calendar.component(.day, from: date))
             return "Resets on \(weekday) \(month) \(day) at \(time)"
+        }
+    }
+
+    /// A time on its own for the pace text and notifications: "2:20 PM" for a 5-hour
+    /// window, "Thursday 2:20 PM" for a weekly one.
+    static func clock(_ date: Date, window: Window) -> String {
+        let time = timeFormatter.string(from: date)
+        switch window {
+        case .fiveHour: return time
+        case .other: return "\(weekdayFormatter.string(from: date)) \(time)"
         }
     }
 

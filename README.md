@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/DragonF1/AIUsageBar/actions/workflows/ci.yml/badge.svg)](https://github.com/DragonF1/AIUsageBar/actions/workflows/ci.yml)
 
-macOS menu bar app showing your Claude subscription usage (5-hour session, weekly, per-model) with colored progress bars, plus the Anthropic status page incident banner. A second tab shows Google Antigravity's four limits the same way: weekly and five-hour for the Gemini models, weekly and five-hour for the Claude and GPT models. Refreshes every 5 minutes. The menu bar follows the selected tab: `5h% / weekly%` next to the Claude starburst, or the Gemini group's `5h% / weekly%` next to the Antigravity arch, with the icon colored by whichever bar is closer to its cap.
+macOS menu bar app showing your Claude subscription usage (5-hour session, weekly, per-model) with colored progress bars, plus the Anthropic status page incident banner. A second tab shows Google Antigravity's four limits the same way: weekly and five-hour for the Gemini models, weekly and five-hour for the Claude and GPT models. Refreshes every 5 minutes. The menu bar follows the selected tab: `5h% / weekly%` next to the Claude starburst, or the Gemini group's `5h% / weekly%` next to the Antigravity arch, with the icon colored by whichever bar is closer to its cap (or by the window you pick). Every row carries a pace forecast, and macOS notifications warn when a window passes a threshold, runs out, is on a pace to run out, or resets after a warning.
 
 No cookie scraping. It reads the OAuth token Claude Code already keeps in your Keychain and asks Anthropic's usage endpoint directly, the same data `claude /usage` shows.
 
@@ -23,17 +23,17 @@ cd AIUsageBar
 scripts/build-app.sh --install
 ```
 
-Builds `dist/AIUsageBar.app`, copies it to `/Applications`, launches it. The app registers itself as a login item on every launch at whatever path it runs from; `--install` moves that login item from `dist/` to `/Applications`.
+Builds `dist/AIUsageBar.app`, copies it to `/Applications`, launches it. "Start at login" is on by default (the popover's gear turns it off) and registers the app at whatever path it runs from; `--install` moves that login item from `dist/` to `/Applications`. The first launch asks for notification permission; decline it and the notification switch does nothing.
 
 The build is ad-hoc signed (no Apple developer certificate), which is why there is no prebuilt download: a downloaded ad-hoc app is refused by Gatekeeper, one you built yourself is not. Expect one Keychain prompt for the `Claude Code-credentials` item after each rebuild, because the ad-hoc signature changes every time.
 
-`swift test` runs the unit tests (parsers, refresh flow, session loader, resume command), and the CI workflow in `.github/workflows/ci.yml` runs them plus `scripts/build-app.sh` on a macOS runner. The app icon is drawn by `scripts/make-icon.py` (needs Pillow); the checked-in `Sources/AIUsageBar/Resources/AppIcon.icns` is its output.
+`swift test` runs the unit tests (parsers, refresh flow, session loader, resume command, pace forecast, notification rules), and the CI workflow in `.github/workflows/ci.yml` runs them plus `scripts/build-app.sh` on a macOS runner. The app icon is drawn by `scripts/make-icon.py` (needs Pillow); the checked-in `Sources/AIUsageBar/Resources/AppIcon.icns` is its output.
 
 ## Configuration
 
 Optional. The app reads `~/.config/aiusagebar/` and never writes there.
 
-- `config.json` has two switches. `{"claude": {"refresh": true}}` lets the app refresh Claude Code's token itself (see "How it works"). `"resume"` changes what "Resume" in the sessions window runs. Default is a new Terminal window with `claude --resume <id>` in the session's folder. To go through your own launcher script instead (say one that adds `--permission-mode` or `--effort` flags):
+- `config.json` has three keys. `{"claude": {"refresh": true}}` lets the app refresh Claude Code's token itself (see "How it works"). `{"notifications": {"thresholds": [80, 95]}}` sets the percentages the notifications warn at (default 80 and 95; an empty list keeps only the used-up, pace and reset notices). `"resume"` changes what "Resume" in the sessions window runs. Default is a new Terminal window with `claude --resume <id>` in the session's folder. To go through your own launcher script instead (say one that adds `--permission-mode` or `--effort` flags):
 
   ```json
   {"resume": {"launcher": "~/bin/claude-launch.sh", "env_file": "~/bin/claude-launch.env"}}
@@ -47,6 +47,19 @@ Optional. The app reads `~/.config/aiusagebar/` and never writes there.
   ```
 
   Without the file the Antigravity tab only reads the token Antigravity keeps fresh, and says so when that token has expired.
+
+## Menu
+
+The gear at the top right of the popover holds the switches; right-clicking the menu bar item shows the same ones plus Refresh and Quit. They live in the app's own defaults, not in `config.json`.
+
+- Refresh now (⌘R).
+- Notifications: on by default. One notification per window per poll, and each kind once per cycle: "at 82%" when a threshold is first passed (a jump past two thresholds posts once, for the higher one), "used up" at 100%, "running out" when the pace forecast lands before the reset, and "reset" when a window that got any of those warnings starts over. Turning the switch off keeps tracking silently, so nothing that happened while it was off is replayed when it comes back on.
+- Start at login: on by default.
+- Menu bar tint: Auto (the 5-hour window, or the weekly one once it reaches 85%), 5-hour window, or Weekly window. This picks which window colors the icon; the numbers next to it do not change.
+
+## Pace forecast
+
+Each usage row ends with "At this pace: ~62% at reset" or, in orange, "At this pace: out at 3:40 PM". The line is a straight line through the recent polls of the current cycle (the last hour for 5-hour windows, the last day for weekly ones) carried to the reset. It needs ten minutes of samples for a 5-hour window and two hours for a weekly one, and goes quiet when usage is flat, the window is used up, or the reset has passed. A cycle starts over when the percentage drops by more than five points or the reset time moves by more than a minute. Samples and the notification state are kept in `~/Library/Application Support/AIUsageBar/quota.json` so a relaunch neither loses the forecast nor repeats a notification.
 
 ## How it works
 

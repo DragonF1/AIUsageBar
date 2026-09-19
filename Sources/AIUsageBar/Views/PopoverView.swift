@@ -5,10 +5,15 @@ struct PopoverView: View {
     var antigravity: AntigravityStore
     var status: StatusStore
     var tokens: TokenStore
+    var monitor: QuotaMonitor
     var onShowSessions: () -> Void
     var onQuit: () -> Void
 
     @AppStorage(UsageTab.key) private var tab: UsageTab = .claude
+    // The same switches the right-click menu shows, on the popover so nobody has to know about right-click.
+    @AppStorage(Preferences.Key.notifications) private var notifications = true
+    @AppStorage(Preferences.Key.startAtLogin) private var startAtLogin = true
+    @AppStorage(Preferences.Key.menuBarMetric) private var metric: MenuBarMetric = .auto
 
     @State private var now = Date()
     @State private var revealed = false
@@ -47,6 +52,10 @@ struct PopoverView: View {
         }
         .onDisappear { revealed = false }
         .onReceive(tick) { now = $0 }
+        .onChange(of: notifications) { _, on in
+            if on { monitor.notifier.requestAuthorization() }
+        }
+        .onChange(of: startAtLogin) { _, on in LoginItem.apply(on) }
     }
 
     @ViewBuilder private var content: some View {
@@ -61,7 +70,7 @@ struct PopoverView: View {
                 StatusView(status: status, now: now)
             }
         case .antigravity:
-            AntigravityTab(store: antigravity, now: now)
+            AntigravityTab(store: antigravity, monitor: monitor, now: now)
         }
     }
 
@@ -78,6 +87,7 @@ struct PopoverView: View {
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Capsule().fill(Color.accentColor.opacity(0.15)))
             }
+            settingsMenu
         }
     }
 
@@ -107,9 +117,11 @@ struct PopoverView: View {
         } else {
             VStack(spacing: 12) {
                 ForEach(limits) { limit in
+                    let reading = QuotaReading.claude(limit)
                     LimitRow(title: limit.title,
                              percent: limit.percent,
                              detail: ResetText.describe(limit.resetsAt, window: limit.kind == "session" ? .fiveHour : .other, now: now),
+                             pace: reading.flatMap { monitor.paceLine(for: $0.id, window: $0.window, now: now) },
                              dimmed: store.isStale)
                 }
                 if let extra = store.usage?.extraUsage, extra.isEnabled == true {
@@ -193,5 +205,25 @@ struct PopoverView: View {
             Button("Quit", action: onQuit)
         }
         .controlSize(.small)
+    }
+
+    private var settingsMenu: some View {
+        Menu {
+            Toggle("Notifications", isOn: $notifications)
+            Toggle("Start at login", isOn: $startAtLogin)
+            Picker("Menu bar tint", selection: $metric) {
+                ForEach(MenuBarMetric.allCases, id: \.self) { Text($0.title).tag($0) }
+            }
+        } label: {
+            Image(systemName: "gearshape")
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Notifications warn at \(StatusItemController.thresholdText(monitor.thresholds)), when a window is used up, "
+              + "runs out at the current pace, or resets after a warning.")
     }
 }
