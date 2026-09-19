@@ -6,6 +6,7 @@ final class StatusItemController: NSObject {
     private let store: UsageStore
     private let antigravity: AntigravityStore
     private let status: StatusStore
+    private let antigravityStatus: StatusStore
     private let tokens: TokenStore
     private let antigravityTokens: AntigravityTokenStore
     private let monitor: QuotaMonitor
@@ -17,12 +18,13 @@ final class StatusItemController: NSObject {
     private var observation: Task<Void, Never>?
     private var outsideClickMonitor: Any?
 
-    init(store: UsageStore, antigravity: AntigravityStore, status: StatusStore, tokens: TokenStore,
-         antigravityTokens: AntigravityTokenStore, monitor: QuotaMonitor)
+    init(store: UsageStore, antigravity: AntigravityStore, status: StatusStore, antigravityStatus: StatusStore,
+         tokens: TokenStore, antigravityTokens: AntigravityTokenStore, monitor: QuotaMonitor)
     {
         self.store = store
         self.antigravity = antigravity
         self.status = status
+        self.antigravityStatus = antigravityStatus
         self.tokens = tokens
         self.antigravityTokens = antigravityTokens
         self.monitor = monitor
@@ -35,7 +37,7 @@ final class StatusItemController: NSObject {
         popover.behavior = .transient
         popover.animates = true
         let hosting = NSHostingController(rootView: PopoverView(store: store, antigravity: antigravity, status: status,
-                                                                tokens: tokens, antigravityTokens: antigravityTokens,
+                                                                antigravityStatus: antigravityStatus, tokens: tokens, antigravityTokens: antigravityTokens,
                                                                 monitor: monitor,
                                                                 onShowSessions: { [weak self] in self?.showSessions() },
                                                                 onShowCost: { [weak self] in self?.costWindow.show() },
@@ -150,6 +152,7 @@ final class StatusItemController: NSObject {
             store.refreshIfStale()
             antigravity.refreshIfStale()
             status.refreshIfStale()
+            antigravityStatus.refreshIfStale()
             tokens.refreshIfStale()
             antigravityTokens.refreshIfStale()
             // Accessory apps are rarely "active", so .transient alone does not always
@@ -204,6 +207,8 @@ final class StatusItemController: NSObject {
         menu.addItem(tint)
 
         menu.addItem(.separator())
+        menu.addItem(withTitle: UsagePage.title(for: UsageTab.current), action: #selector(openUsagePage), keyEquivalent: "").target = self
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Quit AI Usage Bar", action: #selector(quit), keyEquivalent: "q").target = self
         item.menu = menu
         item.button?.performClick(nil)
@@ -239,10 +244,14 @@ final class StatusItemController: NSObject {
         Task {
             await store.refresh(reason: "menu")
             await antigravity.refresh(reason: "menu")
+            await status.refresh()
+            await antigravityStatus.refresh()
             await tokens.refresh(reason: "menu")
             await antigravityTokens.refresh(reason: "menu")
         }
     }
+
+    @objc private func openUsagePage() { UsagePage.open(for: UsageTab.current) }
 
     @objc private func quit() { NSApp.terminate(nil) }
 }

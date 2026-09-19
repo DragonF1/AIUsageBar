@@ -4,6 +4,7 @@ struct PopoverView: View {
     @Bindable var store: UsageStore
     var antigravity: AntigravityStore
     var status: StatusStore
+    var antigravityStatus: StatusStore
     var tokens: TokenStore
     var antigravityTokens: AntigravityTokenStore
     var monitor: QuotaMonitor
@@ -77,6 +78,8 @@ struct PopoverView: View {
                 costSection(antigravityTokens,
                             week: TokenWindow.weekStart(resetsAt: antigravityWeeklyReset, now: now),
                             onShow: onShowAntigravityCost)
+                Divider()
+                StatusView(status: antigravityStatus, now: now)
             }
         }
     }
@@ -235,6 +238,7 @@ struct PopoverView: View {
                     await store.refresh(reason: "manual")
                     await antigravity.refresh(reason: "manual")
                     await status.refresh()
+                    await antigravityStatus.refresh()
                     await tokens.refresh(reason: "manual")
                     await antigravityTokens.refresh(reason: "manual")
                 }
@@ -252,6 +256,8 @@ struct PopoverView: View {
             Picker("Menu bar tint", selection: $metric) {
                 ForEach(MenuBarMetric.allCases, id: \.self) { Text($0.title).tag($0) }
             }
+            Divider()
+            Button(UsagePage.title(for: tab)) { UsagePage.open(for: tab) }
         } label: {
             Image(systemName: "gearshape")
                 .font(.body)

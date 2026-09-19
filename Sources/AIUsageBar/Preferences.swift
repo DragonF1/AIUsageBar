@@ -48,6 +48,32 @@ enum MenuBarMetric: String, CaseIterable {
     }
 }
 
+/// The web page behind the menus' last item, per tab. claude.ai has a usage page; Antigravity
+/// shows its quota only in the app, so its tab opens the Google One page that sets the plan
+/// (and sells the AI credits that extend it).
+enum UsagePage {
+    static let claude = URL(string: "https://claude.ai/settings/usage")!
+    static let antigravity = URL(string: "https://one.google.com/ai")!
+
+    static func url(for tab: UsageTab) -> URL {
+        switch tab {
+        case .claude: return claude
+        case .antigravity: return antigravity
+        }
+    }
+
+    static func title(for tab: UsageTab) -> String {
+        switch tab {
+        case .claude: return "Usage on claude.ai"
+        case .antigravity: return "Plan on Google One"
+        }
+    }
+
+    static func open(for tab: UsageTab) {
+        NSWorkspace.shared.open(url(for: tab))
+    }
+}
+
 enum LoginItem {
     /// Registers or drops the login item to match the switch. Errors are ignored: System
     /// Settings can override either way, and the status is read again on the next launch.

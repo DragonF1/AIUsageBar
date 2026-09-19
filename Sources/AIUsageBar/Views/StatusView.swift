@@ -1,10 +1,17 @@
 import SwiftUI
 
-/// Anthropic status banner, modeled on the claude.ai in-app status card.
+/// Status banner, modeled on the claude.ai in-app status card; the store says which page it
+/// summarises (Anthropic's on the Claude tab, Google Cloud's on the Antigravity tab).
 struct StatusView: View {
     let status: StatusStore
     let now: Date
-    @AppStorage("statusHidden") private var hidden = false
+    @AppStorage private var hidden: Bool
+
+    init(status: StatusStore, now: Date) {
+        self.status = status
+        self.now = now
+        _hidden = AppStorage(wrappedValue: false, status.hiddenKey)
+    }
 
     var body: some View {
         if let summary = status.summary {
@@ -47,7 +54,7 @@ struct StatusView: View {
                 HStack {
                     checked
                     Spacer()
-                    Link(destination: StatusClient.pageURL) {
+                    Link(destination: status.client.pageURL) {
                         HStack(spacing: 2) { Text("Open status page"); Image(systemName: "arrow.right") }
                     }
                     .font(.caption)

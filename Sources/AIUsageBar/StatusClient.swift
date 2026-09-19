@@ -90,11 +90,20 @@ struct StatusSummary: Codable, Equatable {
     }
 }
 
-struct StatusClient {
+/// A public status page the popover can summarise: Anthropic's for the Claude tab, Google
+/// Cloud's for Antigravity. Each feed folds its own format into a `StatusSummary`.
+protocol StatusFeed: Sendable {
+    /// The page the card's "Open status page" link opens.
+    var pageURL: URL { get }
+    func fetch() async throws -> StatusSummary
+}
+
+struct StatusClient: StatusFeed {
     static let summaryURL = URL(string: "https://status.claude.com/api/v2/summary.json")!
     static let pageURL = URL(string: "https://status.claude.com")!
 
     var http: HTTPClient = URLSessionHTTPClient()
+    var pageURL: URL { Self.pageURL }
 
     func fetch() async throws -> StatusSummary {
         var req = URLRequest(url: Self.summaryURL)
@@ -113,9 +122,16 @@ final class StatusStore {
     private(set) var checkedAt: Date?
     private(set) var failed = false
 
-    var client = StatusClient()
+    var client: any StatusFeed
+    /// The defaults key remembering whether the card's details are folded away.
+    let hiddenKey: String
     private var timer: Timer?
     private var inFlight = false
+
+    init(client: any StatusFeed = StatusClient(), hiddenKey: String = "statusHidden") {
+        self.client = client
+        self.hiddenKey = hiddenKey
+    }
 
     func start() {
         timer?.invalidate()

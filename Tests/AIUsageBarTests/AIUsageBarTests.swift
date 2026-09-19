@@ -272,6 +272,88 @@ final class StatusTests: XCTestCase {
     }
 }
 
+final class GoogleStatusTests: XCTestCase {
+    /// Shaped like status.cloud.google.com/incidents.json: an open Code Assist disruption, a
+    /// closed Gemini API incident, and an open one on a product the card ignores.
+    let feed = """
+    [{"id":"open1","begin":"2026-09-18T10:00:00+00:00","end":null,"modified":"2026-09-18T11:00:00+00:00",
+      "external_desc":"Gemini Code Assist users are seeing elevated error rates.","status_impact":"SERVICE_DISRUPTION","severity":"medium",
+      "affected_products":[{"title":"Gemini Code Assist","id":"deUeOEPYanfJ9w8cpyBJ"},{"title":"Cloud Run","id":"x1"}],
+      "most_recent_update":{"when":"2026-09-18T11:00:00+00:00","status":"SERVICE_DISRUPTION","text":"## Summary\\nMitigation is underway.\\n\\nNext update in 1 hour."},
+      "updates":[{"when":"2026-09-18T11:00:00+00:00","status":"SERVICE_DISRUPTION","text":"## Summary\\nMitigation is underway.\\n\\nNext update in 1 hour."},
+                 {"when":"2026-09-18T10:05:00+00:00","status":"SERVICE_DISRUPTION","text":"We are investigating."}],
+      "uri":"incidents/open1"},
+     {"id":"closed1","begin":"2026-09-01T10:00:00+00:00","end":"2026-09-01T12:00:00+00:00","external_desc":"Old Gemini API outage","status_impact":"SERVICE_OUTAGE",
+      "affected_products":[{"title":"Vertex Gemini API","id":"Z0FZJAMvEB4j3NbCJs6B"}],
+      "most_recent_update":{"when":"2026-09-01T12:00:00+00:00","status":"AVAILABLE","text":"Resolved."},"uri":"incidents/closed1"},
+     {"id":"other1","begin":"2026-09-18T09:00:00+00:00","end":null,"external_desc":"Compute Engine trouble","status_impact":"SERVICE_OUTAGE",
+      "affected_products":[{"title":"Google Compute Engine","id":"x2"}],"uri":"incidents/other1"}]
+    """.data(using: .utf8)!
+
+    func testKeepsOpenIncidentsOnTheWatchedProducts() throws {
+        let incidents = try UsageClient.decoder.decode([GoogleIncident].self, from: feed)
+        let summary = GoogleStatusClient.summary(incidents)
+        XCTAssertFalse(summary.isAllClear)
+        XCTAssertEqual(summary.status?.indicator, "major")
+        XCTAssertEqual(summary.status?.description, "Service Disruption")
+        XCTAssertEqual(summary.productComponents.map(\.name), ["Gemini Code Assist", "Gemini API"])
+        XCTAssertEqual(summary.productComponents.map(\.status), ["partial_outage", "operational"])
+        XCTAssertEqual(summary.affectedNames, "Gemini Code Assist")
+        XCTAssertEqual(summary.activeIncidents.map(\.id), ["open1"])
+        let incident = try XCTUnwrap(summary.incidents?.first)
+        XCTAssertEqual(incident.name, "Gemini Code Assist users are seeing elevated error rates.")
+        XCTAssertEqual(incident.impact, "major")
+        XCTAssertEqual(incident.status, "service disruption")
+        XCTAssertEqual(incident.shortlink, "https://status.cloud.google.com/incidents/open1")
+        XCTAssertEqual(incident.latestBody, "Summary\nMitigation is underway.\nNext update in 1 hour.")
+        XCTAssertEqual(incident.affected, "Gemini Code Assist")
+        XCTAssertEqual(incident.updatedAt, ISO8601DateFormatter().date(from: "2026-09-18T11:00:00+00:00"))
+    }
+
+    func testAllClearWithoutOpenWatchedIncidents() throws {
+        let incidents = try UsageClient.decoder.decode([GoogleIncident].self, from: feed).filter { $0.id != "open1" }
+        let summary = GoogleStatusClient.summary(incidents)
+        XCTAssertTrue(summary.isAllClear)
+        XCTAssertEqual(summary.status?.description, "All Systems Operational")
+        XCTAssertEqual(summary.productComponents.map(\.status), ["operational", "operational"])
+        XCTAssertEqual(summary.activeIncidents, [])
+    }
+
+    func testWorstImpactWinsPerProductAndOverall() throws {
+        var open = try UsageClient.decoder.decode([GoogleIncident].self, from: feed)[0]
+        open.id = "open2"
+        open.statusImpact = "SERVICE_OUTAGE"
+        open.affectedProducts = [.init(id: "Z0FZJAMvEB4j3NbCJs6B", title: "Vertex Gemini API")]
+        let incidents = try UsageClient.decoder.decode([GoogleIncident].self, from: feed) + [open]
+        let summary = GoogleStatusClient.summary(incidents)
+        XCTAssertEqual(summary.status?.indicator, "critical")
+        XCTAssertEqual(summary.productComponents.map(\.status), ["partial_outage", "major_outage"])
+        XCTAssertEqual(summary.activeIncidents.map(\.id), ["open2", "open1"], "outage sorts before disruption")
+    }
+
+    func testFetchDecodesTheFeed() async throws {
+        let http = FakeHTTP([HTTPResponse(status: 200, headers: [:], body: feed)])
+        let summary = try await GoogleStatusClient(http: http).fetch()
+        XCTAssertEqual(summary.activeIncidents.map(\.id), ["open1"])
+        XCTAssertEqual(GoogleStatusClient(http: http).pageURL.absoluteString, "https://status.cloud.google.com")
+    }
+
+    func testPlainTextDropsHeadingsAndBlankLines() {
+        XCTAssertEqual(GoogleIncident.plainText("## Incident Report\n### Summary\n\nAll clear.\n"), "Incident Report\nSummary\nAll clear.")
+        XCTAssertNil(GoogleIncident.plainText("\n\n"))
+        XCTAssertNil(GoogleIncident.plainText(nil))
+    }
+}
+
+final class UsagePageTests: XCTestCase {
+    func testEachTabOpensItsOwnPage() {
+        XCTAssertEqual(UsagePage.title(for: .claude), "Usage on claude.ai")
+        XCTAssertEqual(UsagePage.url(for: .claude).absoluteString, "https://claude.ai/settings/usage")
+        XCTAssertEqual(UsagePage.title(for: .antigravity), "Plan on Google One")
+        XCTAssertEqual(UsagePage.url(for: .antigravity).absoluteString, "https://one.google.com/ai")
+    }
+}
+
 final class UsageTabTests: XCTestCase {
     /// The provider switch tints the marks itself, so each tab offers a template image at the
     /// control's size and the two marks are distinct.
