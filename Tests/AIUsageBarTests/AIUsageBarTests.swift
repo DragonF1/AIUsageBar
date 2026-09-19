@@ -272,6 +272,19 @@ final class StatusTests: XCTestCase {
     }
 }
 
+final class UsageTabTests: XCTestCase {
+    /// The provider switch tints the marks itself, so each tab offers a template image at the
+    /// control's size and the two marks are distinct.
+    func testEachTabHasATemplateMark() {
+        for tab in UsageTab.allCases {
+            XCTAssertTrue(tab.icon.isTemplate, tab.title)
+            XCTAssertEqual(tab.icon.size, TintedMark.templateSize, tab.title)
+        }
+        XCTAssertFalse(UsageTab.claude.icon === UsageTab.antigravity.icon)
+        XCTAssertNotEqual(UsageTab.claude.icon.tiffRepresentation, UsageTab.antigravity.icon.tiffRepresentation)
+    }
+}
+
 // MARK: - Antigravity
 
 /// Live capture of `v1internal:retrieveUserQuotaSummary` (2026-09-14 20:42 local).

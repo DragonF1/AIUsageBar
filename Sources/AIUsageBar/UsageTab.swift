@@ -1,4 +1,4 @@
-import Foundation
+import AppKit
 
 /// Which provider the popover (and the menu bar item) is showing.
 enum UsageTab: String, CaseIterable, Identifiable {
@@ -13,6 +13,14 @@ enum UsageTab: String, CaseIterable, Identifiable {
         switch self {
         case .claude: return "Claude Code"
         case .antigravity: return "Antigravity"
+        }
+    }
+
+    /// The product mark as a template image, so a control can tint it to match its text.
+    var icon: NSImage {
+        switch self {
+        case .claude: return ClaudeIcon.template
+        case .antigravity: return AntigravityIcon.template
         }
     }
 

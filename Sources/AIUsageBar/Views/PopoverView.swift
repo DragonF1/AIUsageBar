@@ -26,12 +26,8 @@ struct PopoverView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header.transaction { $0.animation = nil }
-            Picker("Provider", selection: $tab) {
-                ForEach(UsageTab.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .transaction { $0.animation = nil }
+            ProviderPicker(tab: $tab)
+                .transaction { $0.animation = nil }
             Divider()
             // Each tab lives on its own side: the left tab slides in and out through the
             // leading edge, the right one through the trailing edge, so switching reads as a carousel.

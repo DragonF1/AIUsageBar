@@ -50,7 +50,7 @@ Optional. The app reads `~/.config/aiusagebar/` and never writes there.
 
 ## Menu
 
-The gear at the top right of the popover holds the switches; right-clicking the menu bar item shows the same ones plus Refresh and Quit. They live in the app's own defaults, not in `config.json`.
+Under the popover's header, a segmented switch with each product's mark next to its name picks the tab (Claude Code or Antigravity); the choice is remembered and the menu bar item follows it. The gear at the top right holds the switches; right-clicking the menu bar item shows the same ones plus Refresh and Quit. They live in the app's own defaults, not in `config.json`.
 
 - Refresh now (⌘R).
 - Notifications: on by default. One notification per window per poll, and each kind once per cycle: "at 82%" when a threshold is first passed (a jump past two thresholds posts once, for the higher one), "used up" at 100%, "running out" when the pace forecast lands before the reset, and "reset" when a window that got any of those warnings starts over. Turning the switch off keeps tracking silently, so nothing that happened while it was off is replayed when it comes back on.
