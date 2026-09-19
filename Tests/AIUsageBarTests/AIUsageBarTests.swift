@@ -270,6 +270,45 @@ final class StatusTests: XCTestCase {
         XCTAssertEqual(RelativeText.ago(now.addingTimeInterval(-3 * 60), now: now), "3 mins ago")
         XCTAssertEqual(RelativeText.ago(now.addingTimeInterval(-26 * 3600), now: now), "1 day ago")
     }
+
+    func testSecondFetchIsConditionalAndA304KeepsTheSummary() async throws {
+        let http = FakeHTTP([
+            HTTPResponse(status: 200, headers: ["etag": "W/\"abc\""], body: sample),
+            HTTPResponse(status: 304, headers: [:], body: Data()),
+        ])
+        let client = StatusClient(http: http)
+        let first = try await client.fetch()
+        let second = try await client.fetch()
+        XCTAssertNil(http.requests[0].value(forHTTPHeaderField: "If-None-Match"), "nothing to validate against yet")
+        XCTAssertEqual(http.requests[1].value(forHTTPHeaderField: "If-None-Match"), "W/\"abc\"")
+        XCTAssertNil(http.requests[1].value(forHTTPHeaderField: "If-Modified-Since"), "no Last-Modified came back")
+        XCTAssertEqual(second, first)
+        XCTAssertEqual(second.affectedNames, "Claude Cowork")
+    }
+
+    func testNoValidatorMeansNoConditionalHeader() async throws {
+        let http = FakeHTTP([
+            HTTPResponse(status: 200, headers: [:], body: sample),
+            HTTPResponse(status: 200, headers: [:], body: sample),
+        ])
+        let client = StatusClient(http: http)
+        _ = try await client.fetch()
+        _ = try await client.fetch()
+        XCTAssertNil(http.requests[1].value(forHTTPHeaderField: "If-None-Match"))
+        XCTAssertNil(http.requests[1].value(forHTTPHeaderField: "If-Modified-Since"))
+    }
+
+    func testA304WithNothingRememberedIsAnError() async {
+        let http = FakeHTTP([HTTPResponse(status: 304, headers: [:], body: Data())])
+        do {
+            _ = try await StatusClient(http: http).fetch()
+            XCTFail("expected a throw")
+        } catch let UsageError.http(status) {
+            XCTAssertEqual(status, 304)
+        } catch {
+            XCTFail("unexpected error \(error)")
+        }
+    }
 }
 
 final class GoogleStatusTests: XCTestCase {
@@ -336,6 +375,21 @@ final class GoogleStatusTests: XCTestCase {
         let summary = try await GoogleStatusClient(http: http).fetch()
         XCTAssertEqual(summary.activeIncidents.map(\.id), ["open1"])
         XCTAssertEqual(GoogleStatusClient(http: http).pageURL.absoluteString, "https://status.cloud.google.com")
+    }
+
+    func testSecondFetchSendsIfModifiedSinceAndA304KeepsTheSummary() async throws {
+        let stamp = "Thu, 18 Sep 2026 10:00:00 GMT"
+        let http = FakeHTTP([
+            HTTPResponse(status: 200, headers: ["last-modified": stamp], body: feed),
+            HTTPResponse(status: 304, headers: [:], body: Data()),
+        ])
+        let client = GoogleStatusClient(http: http)
+        let first = try await client.fetch()
+        let second = try await client.fetch()
+        XCTAssertNil(http.requests[0].value(forHTTPHeaderField: "If-Modified-Since"))
+        XCTAssertEqual(http.requests[1].value(forHTTPHeaderField: "If-Modified-Since"), stamp)
+        XCTAssertEqual(second, first)
+        XCTAssertEqual(second.activeIncidents.map(\.id), ["open1"])
     }
 
     func testPlainTextDropsHeadingsAndBlankLines() {

@@ -104,15 +104,71 @@ struct StatusClient: StatusFeed {
 
     var http: HTTPClient = URLSessionHTTPClient()
     var pageURL: URL { Self.pageURL }
+    /// The summary page sends an ETag, so every poll after the first is conditional.
+    var cache = FeedCache<StatusSummary>()
 
     func fetch() async throws -> StatusSummary {
         var req = URLRequest(url: Self.summaryURL)
         req.timeoutInterval = 15
         req.setValue("application/json", forHTTPHeaderField: "Accept")
+        return try await cache.fetch(req, http: http) { body in
+            try UsageClient.decoder.decode(StatusSummary.self, from: body)
+        }
+    }
+}
+
+/// Remembers a feed's last decoded body together with the validators its server sent (ETag,
+/// Last-Modified), so every later request is conditional and a 304 hands the remembered value
+/// back with nothing to download or decode. A class so the copies of a client struct share it.
+final class FeedCache<Value: Sendable>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var etag: String?
+    private var lastModified: String?
+    private var value: Value?
+
+    init() {}
+
+    /// The value the last 200 decoded to, nil before the first.
+    var remembered: Value? {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
+
+    /// Sends `request` with the validators of the last 200 added, decodes a 200 and remembers
+    /// it, returns the remembered value on a 304, and throws `UsageError.http` otherwise (a 304
+    /// with nothing remembered included, which a server should never send).
+    func fetch(_ request: URLRequest, http: HTTPClient, decode: (Data) throws -> Value) async throws -> Value {
+        var req = request
+        prepare(&req)
         let resp = try await http.send(req)
-        guard resp.status == 200 else { throw UsageError.http(resp.status) }
-        do { return try UsageClient.decoder.decode(StatusSummary.self, from: resp.body) }
-        catch { throw UsageError.decoding(String(describing: error)) }
+        switch resp.status {
+        case 200:
+            let value: Value
+            do { value = try decode(resp.body) }
+            catch { throw UsageError.decoding(String(describing: error)) }
+            remember(value, from: resp)
+            return value
+        case 304:
+            guard let value = remembered else { throw UsageError.http(304) }
+            return value
+        default:
+            throw UsageError.http(resp.status)
+        }
+    }
+
+    /// Adds If-None-Match / If-Modified-Since when the last 200 gave the matching validator.
+    func prepare(_ request: inout URLRequest) {
+        lock.lock(); defer { lock.unlock() }
+        guard value != nil else { return }
+        if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
+        if let lastModified { request.setValue(lastModified, forHTTPHeaderField: "If-Modified-Since") }
+    }
+
+    private func remember(_ value: Value, from response: HTTPResponse) {
+        lock.lock(); defer { lock.unlock() }
+        self.value = value
+        etag = response.header("ETag")
+        lastModified = response.header("Last-Modified")
     }
 }
 

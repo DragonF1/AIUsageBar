@@ -17,17 +17,18 @@ struct GoogleStatusClient: StatusFeed {
 
     var http: HTTPClient = URLSessionHTTPClient()
     var pageURL: URL { Self.pageURL }
+    /// The feed is 170 KB of every recent incident and changes rarely, but it is served with
+    /// `no-cache, must-revalidate` and a Last-Modified date, so every poll after the first asks
+    /// with If-Modified-Since and a 304 keeps the last summary.
+    var cache = FeedCache<StatusSummary>()
 
     func fetch() async throws -> StatusSummary {
         var req = URLRequest(url: Self.feedURL)
         req.timeoutInterval = 15
         req.setValue("application/json", forHTTPHeaderField: "Accept")
-        let resp = try await http.send(req)
-        guard resp.status == 200 else { throw UsageError.http(resp.status) }
-        let incidents: [GoogleIncident]
-        do { incidents = try UsageClient.decoder.decode([GoogleIncident].self, from: resp.body) }
-        catch { throw UsageError.decoding(String(describing: error)) }
-        return Self.summary(incidents)
+        return try await cache.fetch(req, http: http) { body in
+            Self.summary(try UsageClient.decoder.decode([GoogleIncident].self, from: body))
+        }
     }
 
     /// Open incidents (no `end`) touching a watched product, worst first; every watched product
