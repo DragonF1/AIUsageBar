@@ -195,6 +195,12 @@ final class StatusItemController: NSObject {
         login.target = self
         login.state = Preferences.startAtLogin ? .on : .off
 
+        let extra = menu.addItem(withTitle: "Extra usage credits", action: #selector(toggleExtraUsage), keyEquivalent: "")
+        extra.target = self
+        extra.state = Preferences.extraUsage ? .on : .off
+        extra.toolTip = "Shows the month's extra-usage credits under the Claude rows when the account has them "
+            + "enabled, and warns on them like any other window."
+
         let tint = NSMenuItem(title: "Menu bar tint", action: nil, keyEquivalent: "")
         let choices = NSMenu()
         for metric in MenuBarMetric.allCases {
@@ -233,6 +239,10 @@ final class StatusItemController: NSObject {
     @objc private func toggleStartAtLogin() {
         Preferences.startAtLogin.toggle()
         LoginItem.apply(Preferences.startAtLogin)
+    }
+
+    @objc private func toggleExtraUsage() {
+        Preferences.extraUsage.toggle()
     }
 
     @objc private func pickMetric(_ sender: NSMenuItem) {

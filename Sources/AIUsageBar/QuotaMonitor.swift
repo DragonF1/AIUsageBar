@@ -9,6 +9,8 @@ struct QuotaReading: Equatable {
     enum Window: String, Codable {
         case fiveHour
         case weekly
+        /// Extra-usage credits: the endpoint gives no reset time, so there is never a pace.
+        case monthly
     }
 
     var id: String
@@ -28,6 +30,13 @@ struct QuotaReading: Equatable {
                             percent: percent, resetsAt: limit.resetsAt)
     }
 
+    /// Nil when the account has no extra usage, or the endpoint gave no figure to follow.
+    static func extraUsage(_ extra: UsageResponse.ExtraUsage) -> QuotaReading? {
+        guard extra.isActive, let percent = extra.percent else { return nil }
+        return QuotaReading(id: "claude|extra_usage", product: "Claude Code", name: "Extra usage",
+                            window: .monthly, percent: percent, resetsAt: nil)
+    }
+
     static func antigravity(group: AntigravityUsage.Group, bucket: AntigravityUsage.Bucket) -> QuotaReading {
         QuotaReading(id: "antigravity|\(group.id)|\(bucket.id)", product: "Antigravity",
                      name: bucket.rowTitle(in: group),
@@ -38,6 +47,15 @@ struct QuotaReading: Equatable {
 
 extension UsageResponse {
     var readings: [QuotaReading] { displayLimits.compactMap(QuotaReading.claude) }
+
+    /// The rows plus the extra-usage credits when the switch is on and the account has them.
+    func readings(extraUsage: Bool) -> [QuotaReading] {
+        var all = readings
+        if extraUsage, let extra = self.extraUsage, let reading = QuotaReading.extraUsage(extra) {
+            all.append(reading)
+        }
+        return all
+    }
 }
 
 extension AntigravityUsage {
@@ -75,7 +93,7 @@ struct PaceTracker: Codable, Equatable {
     static func lookback(_ window: QuotaReading.Window) -> TimeInterval {
         switch window {
         case .fiveHour: return 60 * 60
-        case .weekly: return 24 * 60 * 60
+        case .weekly, .monthly: return 24 * 60 * 60
         }
     }
 
@@ -83,7 +101,7 @@ struct PaceTracker: Codable, Equatable {
     static func minimumSpan(_ window: QuotaReading.Window) -> TimeInterval {
         switch window {
         case .fiveHour: return 10 * 60
-        case .weekly: return 2 * 60 * 60
+        case .weekly, .monthly: return 2 * 60 * 60
         }
     }
 

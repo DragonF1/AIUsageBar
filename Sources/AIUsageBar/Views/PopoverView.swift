@@ -18,6 +18,7 @@ struct PopoverView: View {
     @AppStorage(Preferences.Key.notifications) private var notifications = true
     @AppStorage(Preferences.Key.startAtLogin) private var startAtLogin = true
     @AppStorage(Preferences.Key.menuBarMetric) private var metric: MenuBarMetric = .auto
+    @AppStorage(Preferences.Key.extraUsage) private var extraUsage = true
 
     @State private var now = Date()
     @State private var revealed = false
@@ -139,10 +140,10 @@ struct PopoverView: View {
                              pace: reading.flatMap { monitor.paceLine(for: $0.id, window: $0.window, now: now) },
                              dimmed: store.isStale)
                 }
-                if let extra = store.usage?.extraUsage, extra.isEnabled == true {
+                if extraUsage, let extra = store.usage?.extraUsage, extra.isActive {
                     LimitRow(title: "Extra usage",
-                             percent: extra.utilization,
-                             detail: extraDetail(extra),
+                             percent: extra.percent,
+                             detail: extra.detailText,
                              dimmed: store.isStale)
                 }
             }
@@ -223,14 +224,6 @@ struct PopoverView: View {
         return tokens.busyCount > 0 ? "\(open) · \(tokens.busyCount) busy" : open
     }
 
-    private func extraDetail(_ e: UsageResponse.ExtraUsage) -> String? {
-        guard let used = e.usedCredits, let limit = e.monthlyLimit else { return nil }
-        let places = e.decimalPlaces ?? 2
-        let scale = pow(10.0, Double(places))
-        let cur = e.currency ?? ""
-        return String(format: "%@%.2f of %@%.2f this month", cur, used / scale, cur, limit / scale)
-    }
-
     private var footer: some View {
         HStack {
             Button("Refresh") {
@@ -253,6 +246,7 @@ struct PopoverView: View {
         Menu {
             Toggle("Notifications", isOn: $notifications)
             Toggle("Start at login", isOn: $startAtLogin)
+            Toggle("Extra usage credits", isOn: $extraUsage)
             Picker("Menu bar tint", selection: $metric) {
                 ForEach(MenuBarMetric.allCases, id: \.self) { Text($0.title).tag($0) }
             }

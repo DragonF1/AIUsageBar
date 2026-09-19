@@ -9,6 +9,7 @@ enum Preferences {
         static let notifications = "notifications"
         static let menuBarMetric = "menuBarMetric"
         static let costRange = "costRange"
+        static let extraUsage = "extraUsage"
     }
 
     static var defaults: UserDefaults = .standard
@@ -23,6 +24,13 @@ enum Preferences {
     static var notifications: Bool {
         get { defaults.object(forKey: Key.notifications) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.notifications) }
+    }
+
+    /// Show the month's extra-usage credits under the Claude rows (and warn on them like any
+    /// other window). On by default; the row only appears for an account that has them enabled.
+    static var extraUsage: Bool {
+        get { defaults.object(forKey: Key.extraUsage) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.extraUsage) }
     }
 
     /// Which window colours the menu bar icon.

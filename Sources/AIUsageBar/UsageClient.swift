@@ -61,6 +61,9 @@ struct UsageResponse: Codable, Equatable {
         }
     }
 
+    /// The account's extra-usage credits: a monthly spend cap the account owner sets, billed
+    /// at API rates once the subscription's windows are used up. Account-wide, not per model.
+    /// Amounts come in the currency's minor unit (`decimal_places` of them per major unit).
     struct ExtraUsage: Codable, Equatable {
         var isEnabled: Bool?
         var utilization: Double?
@@ -74,6 +77,35 @@ struct UsageResponse: Codable, Equatable {
             case usedCredits = "used_credits"
             case monthlyLimit = "monthly_limit"
             case decimalPlaces = "decimal_places"
+        }
+
+        /// The account has credits to show; a disabled account sends every amount as null.
+        var isActive: Bool { isEnabled == true }
+
+        /// Percent of the month's cap spent: the endpoint's figure, else used over limit.
+        var percent: Double? {
+            if let utilization { return utilization }
+            guard let used = usedCredits, let limit = monthlyLimit, limit > 0 else { return nil }
+            return used / limit * 100
+        }
+
+        /// "$12.40 of $50.00 this month"; nil until both amounts are known.
+        var detailText: String? {
+            guard let used = usedCredits, let limit = monthlyLimit else { return nil }
+            let scale = pow(10.0, Double(decimalPlaces ?? 2))
+            return "\(Self.money(used / scale, currency)) of \(Self.money(limit / scale, currency)) this month"
+        }
+
+        /// "$12.40", "€12.40", "XYZ 12.40": the ISO code's symbol as en_US writes it, so the
+        /// text matches the dollar figures on the cost rows.
+        static func money(_ amount: Double, _ currency: String?) -> String {
+            let f = NumberFormatter()
+            f.locale = Locale(identifier: "en_US")
+            f.numberStyle = .currency
+            f.currencyCode = currency ?? "USD"
+            f.minimumFractionDigits = 2
+            f.maximumFractionDigits = 2
+            return f.string(from: amount as NSNumber) ?? String(format: "%.2f", amount)
         }
     }
 

@@ -42,6 +42,49 @@ final class QuotaReadingTests: XCTestCase {
         XCTAssertNil(QuotaReading.claude(UsageResponse.Limit(kind: "session")))
     }
 
+    func testExtraUsageJoinsTheReadingsOnlyWhenAskedAndEnabled() throws {
+        let disabled = try UsageClient.decoder.decode(UsageResponse.self, from: sampleUsage)
+        XCTAssertEqual(disabled.readings(extraUsage: true).count, 3, "the account has no credits")
+
+        var enabled = disabled
+        enabled.extraUsage = UsageResponse.ExtraUsage(isEnabled: true, utilization: 24.8, usedCredits: 1240,
+                                                       monthlyLimit: 5000, currency: "USD", decimalPlaces: 2)
+        XCTAssertEqual(enabled.readings(extraUsage: false).count, 3, "the switch is off")
+        let readings = enabled.readings(extraUsage: true)
+        XCTAssertEqual(readings.count, 4)
+        XCTAssertEqual(readings[3].id, "claude|extra_usage")
+        XCTAssertEqual(readings[3].name, "Extra usage")
+        XCTAssertEqual(readings[3].window, .monthly)
+        XCTAssertEqual(readings[3].percent, 24.8)
+        XCTAssertNil(readings[3].resetsAt)
+    }
+
+    func testExtraUsageTextAndPercent() {
+        let extra = UsageResponse.ExtraUsage(isEnabled: true, utilization: nil, usedCredits: 1240,
+                                             monthlyLimit: 5000, currency: "USD", decimalPlaces: 2)
+        XCTAssertEqual(extra.detailText, "$12.40 of $50.00 this month")
+        XCTAssertEqual(extra.percent, 24.8, "used over limit when the endpoint gives no utilization")
+        XCTAssertEqual(UsageResponse.ExtraUsage.money(1234.5, "EUR"), "€1,234.50")
+        XCTAssertEqual(UsageResponse.ExtraUsage.money(3, nil), "$3.00", "dollars when the currency is missing")
+
+        let empty = UsageResponse.ExtraUsage(isEnabled: false)
+        XCTAssertFalse(empty.isActive)
+        XCTAssertNil(empty.percent)
+        XCTAssertNil(empty.detailText)
+        XCTAssertNil(QuotaReading.extraUsage(empty))
+    }
+
+    @MainActor func testExtraUsageThresholdNotifiesWithoutAReset() {
+        let notifier = FakeNotifier()
+        let monitor = QuotaMonitor(notifier: notifier, cacheURL: nil)
+        monitor.isEnabled = { true }
+        let extra = QuotaReading(id: "claude|extra_usage", product: "Claude Code", name: "Extra usage",
+                                 window: .monthly, percent: 81, resetsAt: nil)
+        monitor.observe([extra], now: t0)
+        XCTAssertEqual(notifier.posted.map(\.title), ["Claude Code: Extra usage at 81%"])
+        XCTAssertNil(monitor.paceLine(for: extra.id, window: .monthly, now: minutes(30)), "no reset time, no pace")
+    }
+
     func testAntigravityReadingsCoverEveryBucket() throws {
         let summary = try UsageClient.decoder.decode(AntigravityQuotaSummary.self, from: antigravityFixture)
         let readings = AntigravityUsage(summary: summary).readings

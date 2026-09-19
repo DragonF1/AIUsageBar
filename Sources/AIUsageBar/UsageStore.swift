@@ -84,7 +84,7 @@ final class UsageStore {
         state = .ok
         backoffUntil = nil
         saveCache()
-        monitor?.observe(response.readings, now: lastUpdated ?? Date())
+        monitor?.observe(response.readings(extraUsage: Preferences.extraUsage), now: lastUpdated ?? Date())
     }
 
     // MARK: - derived
