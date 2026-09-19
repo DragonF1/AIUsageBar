@@ -23,3 +23,19 @@ final class LiveProbeTests: XCTestCase {
         XCTAssertTrue(log.contains("exit clean"), "claude did not leave on its own: \(log.prefix(200))")
     }
 }
+
+/// Asks the real Antigravity IDE on this Mac. Skipped unless AIUSAGEBAR_LIVE_ANTIGRAVITY=1 and
+/// the IDE is running; prints the summary and the tier, never the token.
+final class LiveAntigravityProbeTests: XCTestCase {
+    func testLocalServerAnswers() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["AIUSAGEBAR_LIVE_ANTIGRAVITY"] == "1")
+        let probe = AntigravityLocalProbe()
+        let servers = AntigravityLocalProbe.servers(in: try probe.processList())
+        try XCTSkipIf(servers.isEmpty, "Antigravity is not running")
+        let result = try await probe.fetch()
+        print("LIVE ANTIGRAVITY: pid \(result.pid) port \(result.port) endpoint \(result.endpoint ?? "?") tier \(result.tier ?? "?"): \(result.summary.logLine)")
+        XCTAssertEqual(result.summary.groups?.count, 2)
+        XCTAssertNotNil(result.tier)
+        XCTAssertTrue(result.endpoint?.hasSuffix("cloudcode-pa.googleapis.com") ?? false)
+    }
+}

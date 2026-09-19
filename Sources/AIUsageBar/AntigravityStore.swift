@@ -14,6 +14,8 @@ final class AntigravityStore {
 
     var client = AntigravityClient()
     var auth = AntigravityAuth()
+    /// Asked when the token path fails: the running IDE has a working login of its own.
+    var localProbe = AntigravityLocalProbe()
     /// Told about every successful poll, for the pace lines and the notifications.
     var monitor: QuotaMonitor?
 
@@ -75,6 +77,9 @@ final class AntigravityStore {
                                  : .stale("Rate limited, retrying at \(UsageStore.timeFormatter.string(from: backoffUntil!))")
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            // No token file, login expired with no refresh client, token rejected twice, or the
+            // backend itself unhappy: the IDE, when it is running, can still answer.
+            if await applyLocal(reason: reason, after: msg) { return }
             Self.log.error("fetch failed (\(reason, privacy: .public)): \(msg, privacy: .public)")
             state = usage == nil ? .error(msg) : .stale(msg)
         }
@@ -98,7 +103,29 @@ final class AntigravityStore {
         let summary = try await client.fetch(accessToken: token, host: host)
         // Default level so `log show` finds it after the fact; info and debug are memory-only.
         Self.log.notice("fetch ok (\(reason, privacy: .public)) via \(host, privacy: .public): \(summary.logLine, privacy: .public)")
-        let next = AntigravityUsage(summary: summary, tier: account?.tier ?? usage?.tier, host: host)
+        accept(AntigravityUsage(summary: summary, tier: account?.tier ?? usage?.tier, host: host))
+    }
+
+    /// The IDE's own language server, on localhost. False when it is not running or would not
+    /// answer, in which case the token path's error is the one to show: it says what to fix.
+    private func applyLocal(reason: String, after tokenError: String) async -> Bool {
+        let remembered = usage?.host.flatMap { AntigravityClient.isKnownHost($0) ? $0 : nil }
+        do {
+            let result = try await localProbe.fetch(preferring: remembered)
+            // The server's backend is the one that metered these numbers, so the next poll that
+            // gets a token asks the same one.
+            let host = result.endpoint.flatMap { AntigravityClient.isKnownHost($0) ? $0 : nil } ?? remembered
+            Self.log.notice("fetch ok (\(reason, privacy: .public)) via Antigravity pid \(result.pid, privacy: .public) port \(result.port, privacy: .public) (\(result.endpoint ?? "?", privacy: .public)), token path failed: \(tokenError, privacy: .public): \(result.summary.logLine, privacy: .public)")
+            accept(AntigravityUsage(summary: result.summary, tier: result.tier ?? usage?.tier, host: host))
+            return true
+        } catch {
+            let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            Self.log.info("local probe failed: \(msg, privacy: .public)")
+            return false
+        }
+    }
+
+    private func accept(_ next: AntigravityUsage) {
         usage = next
         lastUpdated = Date()
         state = .ok

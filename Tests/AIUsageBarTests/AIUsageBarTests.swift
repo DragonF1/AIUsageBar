@@ -972,6 +972,80 @@ final class AntigravityStoreTests: XCTestCase {
         XCTAssertEqual(http.requests.count, 1, "backoff should skip the next poll")
     }
 
+    /// A store whose token path is dead: an expired file token with no refresh token, so
+    /// `accessToken()` throws `loginExpired` before any request.
+    @MainActor
+    private func makeExpiredStore(local: FakeHTTP, cacheURL: URL? = nil, ps: String? = nil) throws -> AntigravityStore {
+        let store = AntigravityStore(cacheURL: cacheURL)
+        var auth = AntigravityAuth(client: nil)
+        auth.credentialFile = try tempAntigravityFile(expiry: rfc3339(Date().addingTimeInterval(-3600)), refresh: nil)
+        auth.cacheFile = tempURL("auth")
+        auth.lastAttempt = { nil }
+        auth.recordAttempt = { _ in }
+        store.auth = auth
+        var probe = AntigravityLocalProbe()
+        let ps = ps ?? """
+        96528 /Applications/Antigravity IDE.app/Contents/Resources/app/extensions/antigravity/bin/language_server_macos_arm --csrf_token tok-main --cloud_code_endpoint https://cloudcode-pa.googleapis.com
+        """
+        probe.processList = { ps }
+        probe.listeningPorts = { _ in "language_ 96528 someone    7u  IPv4 0x1      0t0  TCP 127.0.0.1:62185 (LISTEN)\n" }
+        probe.http = local
+        store.localProbe = probe
+        return store
+    }
+
+    @MainActor
+    func testDeadTokenPathAsksTheRunningIDE() async throws {
+        let local = FakeHTTP([ok(localQuotaFixture), ok(localStatusFixture)])
+        let store = try makeExpiredStore(local: local)
+        await store.refresh(reason: "test")
+
+        XCTAssertEqual(local.requests.count, 2)
+        XCTAssertEqual(local.requests[0].url?.host, "127.0.0.1")
+        XCTAssertEqual(store.state, .ok)
+        XCTAssertEqual(store.usage?.tier, "Google AI Pro")
+        XCTAssertEqual(store.usage?.host, AntigravityClient.productionHost, "the server's backend is remembered")
+        XCTAssertEqual(store.usage?.gemini?.buckets.map(\.window), ["5h", "weekly"])
+    }
+
+    @MainActor
+    func testDeadTokenPathWithoutTheIDEShowsTheTokenError() async throws {
+        let local = FakeHTTP([])
+        let store = try makeExpiredStore(local: local, ps: "  512 /sbin/launchd\n")
+        await store.refresh(reason: "test")
+
+        XCTAssertTrue(local.requests.isEmpty)
+        XCTAssertEqual(store.state, .error(AntigravityAuthError.loginExpired.errorDescription!))
+    }
+
+    @MainActor
+    func testIDEAnswerRefusedKeepsTheTokenError() async throws {
+        let cache = tempURL("cache")
+        try writeCache(to: cache, host: AntigravityClient.dailyHost)
+        let local = FakeHTTP([HTTPResponse(status: 401, headers: [:], body: Data())])
+        let store = try makeExpiredStore(local: local, cacheURL: cache)
+        await store.refresh(reason: "test")
+
+        XCTAssertEqual(local.requests.count, 1)
+        XCTAssertEqual(store.state, .stale(AntigravityAuthError.loginExpired.errorDescription!))
+        XCTAssertEqual(store.usage?.host, AntigravityClient.dailyHost, "the cache is untouched")
+    }
+
+    @MainActor
+    func testRateLimitNeverAsksTheIDE() async throws {
+        let http = FakeHTTP([HTTPResponse(status: 429, headers: ["Retry-After": "90"], body: Data())])
+        let store = try makeStore(http: http)
+        let local = FakeHTTP([ok(localQuotaFixture), ok(localStatusFixture)])
+        var probe = AntigravityLocalProbe()
+        probe.processList = { psShouldNotBeRead() }
+        probe.http = local
+        store.localProbe = probe
+        await store.refresh(reason: "test")
+
+        XCTAssertTrue(local.requests.isEmpty)
+        guard case .error = store.state else { return XCTFail("\(store.state)") }
+    }
+
     @MainActor
     func testSuccessfulPollWritesTheHostToTheCache() async throws {
         let cache = tempURL("cache")
@@ -983,6 +1057,12 @@ final class AntigravityStoreTests: XCTestCase {
         XCTAssertEqual(reloaded.usage?.host, AntigravityClient.productionHost)
         XCTAssertEqual(reloaded.state, .stale("Cached"))
     }
+}
+
+/// Marks a process listing that a test expects never to happen.
+func psShouldNotBeRead() -> String {
+    XCTFail("the local probe should not have been consulted")
+    return ""
 }
 
 // MARK: - Tokens
