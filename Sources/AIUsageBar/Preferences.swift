@@ -8,6 +8,7 @@ enum Preferences {
         static let startAtLogin = "startAtLogin"
         static let notifications = "notifications"
         static let menuBarMetric = "menuBarMetric"
+        static let costRange = "costRange"
     }
 
     static var defaults: UserDefaults = .standard

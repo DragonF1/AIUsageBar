@@ -7,28 +7,39 @@ final class StatusItemController: NSObject {
     private let antigravity: AntigravityStore
     private let status: StatusStore
     private let tokens: TokenStore
+    private let antigravityTokens: AntigravityTokenStore
     private let monitor: QuotaMonitor
     private let item: NSStatusItem
     private let popover = NSPopover()
-    private let sessionsWindow: SessionsWindowController
+    private let sessionsWindow: TokenWindowController
+    private let costWindow: TokenWindowController
+    private let antigravityCostWindow: TokenWindowController
     private var observation: Task<Void, Never>?
     private var outsideClickMonitor: Any?
 
-    init(store: UsageStore, antigravity: AntigravityStore, status: StatusStore, tokens: TokenStore, monitor: QuotaMonitor) {
+    init(store: UsageStore, antigravity: AntigravityStore, status: StatusStore, tokens: TokenStore,
+         antigravityTokens: AntigravityTokenStore, monitor: QuotaMonitor)
+    {
         self.store = store
         self.antigravity = antigravity
         self.status = status
         self.tokens = tokens
+        self.antigravityTokens = antigravityTokens
         self.monitor = monitor
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        sessionsWindow = SessionsWindowController(tokens: tokens)
+        sessionsWindow = .sessions(tokens: tokens)
+        costWindow = .cost(ledger: tokens, autosaveName: "CostWindow")
+        antigravityCostWindow = .cost(ledger: antigravityTokens, autosaveName: "AntigravityCostWindow")
         super.init()
 
         popover.behavior = .transient
         popover.animates = true
         let hosting = NSHostingController(rootView: PopoverView(store: store, antigravity: antigravity, status: status,
-                                                                tokens: tokens, monitor: monitor,
+                                                                tokens: tokens, antigravityTokens: antigravityTokens,
+                                                                monitor: monitor,
                                                                 onShowSessions: { [weak self] in self?.showSessions() },
+                                                                onShowCost: { [weak self] in self?.costWindow.show() },
+                                                                onShowAntigravityCost: { [weak self] in self?.antigravityCostWindow.show() },
                                                                 onQuit: { NSApp.terminate(nil) }))
         // Content grows when the status banner or rows arrive after the popover is open;
         // publishing the fitting size lets NSPopover resize instead of clipping the top.
@@ -140,6 +151,7 @@ final class StatusItemController: NSObject {
             antigravity.refreshIfStale()
             status.refreshIfStale()
             tokens.refreshIfStale()
+            antigravityTokens.refreshIfStale()
             // Accessory apps are rarely "active", so .transient alone does not always
             // dismiss on an outside click; activate and watch for clicks in other apps too.
             NSApp.activate(ignoringOtherApps: true)
@@ -228,6 +240,7 @@ final class StatusItemController: NSObject {
             await store.refresh(reason: "menu")
             await antigravity.refresh(reason: "menu")
             await tokens.refresh(reason: "menu")
+            await antigravityTokens.refresh(reason: "menu")
         }
     }
 

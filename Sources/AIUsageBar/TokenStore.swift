@@ -1,10 +1,11 @@
 import Foundation
 import Observation
 
-/// Sibling of `UsageStore` for the token rows on the Claude tab: same polling, but the data
+/// Sibling of `UsageStore` for the cost rows on the Claude tab: same polling, but the data
 /// comes from Claude Code's local transcripts and there is nothing to cache beyond the scanner's own file.
 @MainActor @Observable
-final class TokenStore {
+final class TokenStore: TokenLedger {
+    let product = TokenProduct.claudeCode
     /// Deduplicated responses from the last `retention` seconds.
     private(set) var records: [TokenRecord] = []
     /// Every session the retained transcripts mention, keyed by session id.
@@ -14,8 +15,10 @@ final class TokenStore {
     private(set) var lastScanned: Date?
     private(set) var error: String?
 
-    /// One day past the longest window shown, so a week aligned to the API reset is always covered.
-    nonisolated static let retention: TimeInterval = 8 * 86400
+    /// One day past the cost window's longest range (90 calendar days), so the oldest bar is
+    /// complete however far into today the scan runs (and the week aligned to the API reset is
+    /// always covered).
+    nonisolated static let retention: TimeInterval = TimeInterval(CostRange.retentionDays) * 86400
 
     var scanner = TokenScanner()
     var registry = SessionRegistry()
@@ -58,9 +61,14 @@ final class TokenStore {
 
     // MARK: - derived
 
-    func totals(since start: Date) -> TokenTotals {
-        TokenTotals.sum(records, since: start)
+    /// Rolling 30 calendar days ending today: local midnight `CostReport.dayCount - 1` days ago.
+    static func costWindowStart(now: Date = Date(), calendar: Calendar = .current) -> Date {
+        calendar.date(byAdding: .day, value: 1 - CostReport.dayCount, to: calendar.startOfDay(for: now))
+            ?? calendar.startOfDay(for: now)
     }
+
+    /// Every retained session that said where it ran.
+    var sessionFolders: [String: String]? { sessions.compactMapValues(\.cwd) }
 
     var openCount: Int { live.count }
     var busyCount: Int { live.filter(\.isBusy).count }
@@ -165,8 +173,38 @@ enum TokenText {
 
     /// "$12.34 est.", or "≥ $12.34 est." when some tokens came from models the table does not price.
     static func cost(_ t: TokenTotals) -> String {
-        let usd = String(format: "$%.2f est.", t.cost)
+        let usd = dollars(t.cost) + " est."
         return t.unpricedTokens > 0 ? "≥ " + usd : usd
+    }
+
+    /// "$0.04", "$5,286.29": always two decimals, thousands grouped.
+    static func dollars(_ usd: Double) -> String {
+        "$" + (dollarFormatter.string(from: usd as NSNumber) ?? String(format: "%.2f", usd))
+    }
+
+    private static let dollarFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.numberStyle = .decimal
+        f.usesGroupingSeparator = true
+        f.minimumFractionDigits = 2
+        f.maximumFractionDigits = 2
+        return f
+    }()
+
+    /// "Opus 5", "Sonnet 4.6", "Haiku 4.5" from a Claude model id (the date suffix and the
+    /// `claude-` prefix go); "Gemini 3.1 Pro Low", "Gemini 3.8 Flash" from a Gemini one (every
+    /// dash-separated part capitalised); anything else comes back as it is.
+    static func modelName(_ id: String) -> String {
+        if id.hasPrefix("gemini-") {
+            return id.split(separator: "-").map(\.capitalized).joined(separator: " ")
+        }
+        guard id.hasPrefix("claude-") else { return id }
+        var parts = id.dropFirst("claude-".count).split(separator: "-").map(String.init)
+        if let last = parts.last, last.count == 8, last.allSatisfy(\.isNumber) { parts.removeLast() }
+        guard let family = parts.first, !family.isEmpty else { return id }
+        let version = parts.dropFirst().joined(separator: ".")
+        return version.isEmpty ? family.capitalized : "\(family.capitalized) \(version)"
     }
 
     /// Tooltip: "Input 12k · Output 4.5k · Cache write 900k · Cache read 8.2M".

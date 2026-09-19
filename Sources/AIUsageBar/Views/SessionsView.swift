@@ -111,7 +111,7 @@ struct SessionsView: View {
     }
 
     private var footer: some View {
-        Text(notice ?? tokens.error ?? "Tokens and cost are each session's total over the last 8 days at list prices. Resume reopens a closed session in a new Terminal window.")
+        Text(notice ?? tokens.error ?? "Tokens and cost are each session's total over the retained \(CostRange.retentionDays) days at list prices. Resume reopens a closed session in a new Terminal window.")
             .font(.caption2).foregroundStyle(notice == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 16).padding(.vertical, 8)

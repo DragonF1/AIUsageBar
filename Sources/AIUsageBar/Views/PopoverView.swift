@@ -5,8 +5,11 @@ struct PopoverView: View {
     var antigravity: AntigravityStore
     var status: StatusStore
     var tokens: TokenStore
+    var antigravityTokens: AntigravityTokenStore
     var monitor: QuotaMonitor
     var onShowSessions: () -> Void
+    var onShowCost: () -> Void
+    var onShowAntigravityCost: () -> Void
     var onQuit: () -> Void
 
     @AppStorage(UsageTab.key) private var tab: UsageTab = .claude
@@ -64,14 +67,27 @@ struct PopoverView: View {
             VStack(alignment: .leading, spacing: 14) {
                 rows
                 Divider()
-                tokenRows
+                costSection(tokens,
+                            week: TokenWindow.weekStart(resetsAt: store.usage?.weeklyResetsAt, now: now),
+                            onShow: onShowCost)
                 sessionsButton
                 Divider()
                 StatusView(status: status, now: now)
             }
         case .antigravity:
-            AntigravityTab(store: antigravity, monitor: monitor, now: now)
+            VStack(alignment: .leading, spacing: 14) {
+                AntigravityTab(store: antigravity, monitor: monitor, now: now)
+                Divider()
+                costSection(antigravityTokens,
+                            week: TokenWindow.weekStart(resetsAt: antigravityWeeklyReset, now: now),
+                            onShow: onShowAntigravityCost)
+            }
         }
+    }
+
+    /// The Gemini group's weekly reset, so the Antigravity week lines up with its own limit.
+    private var antigravityWeeklyReset: Date? {
+        antigravity.usage?.gemini?.buckets.first { $0.window == "weekly" }?.resetsAt
     }
 
     private var header: some View {
@@ -139,33 +155,58 @@ struct PopoverView: View {
         return "No usage data yet."
     }
 
-    /// Today and this week from Claude Code's local transcripts; the week aligns to the API's
-    /// weekly reset when the usage endpoint has told us when that is.
-    @ViewBuilder private var tokenRows: some View {
-        if tokens.lastScanned == nil {
-            Text(tokens.error ?? "Scanning Claude Code transcripts…").font(.caption).foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            let week = TokenWindow.weekStart(resetsAt: store.usage?.weeklyResetsAt, now: now)
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
-                TokenRow(title: "Daily tokens",
-                         totals: tokens.totals(since: TokenWindow.todayStart(now: now)),
-                         dimmed: tokens.error != nil)
-                TokenRow(title: "Weekly tokens",
-                         totals: tokens.totals(since: week.start),
-                         detail: week.aligned
-                             ? "Since \(week.start.formatted(.dateTime.weekday(.abbreviated).hour().minute()))"
-                             : "Rolling 7 days",
-                         dimmed: tokens.error != nil)
+    /// Today, this week and the last 30 days from one ledger's local data, under a header that
+    /// opens its cost window. The week aligns to the product's weekly reset when its usage
+    /// endpoint has told us when that is.
+    private func costSection(_ ledger: any TokenLedger, week: (start: Date, aligned: Bool),
+                             onShow: @escaping () -> Void) -> some View
+    {
+        VStack(alignment: .leading, spacing: 8) {
+            costButton(onShow: onShow)
+            if ledger.lastScanned == nil {
+                Text(ledger.error ?? ledger.product.scanning).font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
+                    TokenRow(title: "Today",
+                             totals: ledger.totals(since: TokenWindow.todayStart(now: now)),
+                             detail: "Since midnight",
+                             dimmed: ledger.error != nil)
+                    TokenRow(title: "This week",
+                             totals: ledger.totals(since: week.start),
+                             detail: week.aligned
+                                 ? "Since \(week.start.formatted(.dateTime.weekday(.abbreviated).hour().minute()))"
+                                 : "Rolling 7 days",
+                             dimmed: ledger.error != nil)
+                    TokenRow(title: "Last \(CostReport.dayCount) days",
+                             totals: ledger.totals(since: TokenStore.costWindowStart(now: now)),
+                             detail: "\(CostReport.dayCount) calendar days, today included",
+                             dimmed: ledger.error != nil)
+                }
             }
         }
+    }
+
+    /// Header line of the cost section; opens the cost window with the daily chart.
+    private func costButton(onShow: @escaping () -> Void) -> some View {
+        Button(action: onShow) {
+            HStack(spacing: 6) {
+                Text("Cost").font(.headline)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Cost")
+        .help("Open a window with a bar per day for the last 7, 30 or 90 days and the split by model and project")
     }
 
     /// One line that opens the sessions window; the counts come from Claude Code's session registry.
     private var sessionsButton: some View {
         Button(action: onShowSessions) {
             HStack(spacing: 6) {
-                Text("Sessions").font(.subheadline.weight(.medium))
+                Text("Sessions").font(.headline)
                 Spacer()
                 Text(sessionsSummary).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                 Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
@@ -199,6 +240,7 @@ struct PopoverView: View {
                     await antigravity.refresh(reason: "manual")
                     await status.refresh()
                     await tokens.refresh(reason: "manual")
+                    await antigravityTokens.refresh(reason: "manual")
                 }
             }
             Spacer()

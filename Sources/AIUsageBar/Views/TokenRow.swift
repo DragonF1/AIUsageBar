@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// One line per window: title, compact token count, estimated cost. Kept to a single line so the
-/// two token rows add little height under the usage bars; the tooltip carries the bucket breakdown
+/// cost rows add little height under the usage bars; the tooltip carries the bucket breakdown
 /// and the window boundary.
 struct TokenRow: View {
     let title: String

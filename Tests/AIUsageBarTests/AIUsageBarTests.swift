@@ -272,7 +272,6 @@ final class StatusTests: XCTestCase {
     }
 }
 
-
 // MARK: - Antigravity
 
 /// Live capture of `v1internal:retrieveUserQuotaSummary` (2026-09-14 20:42 local).
@@ -768,14 +767,15 @@ func iso(_ date: Date) -> String {
 func assistantLine(id: String, ts: Date = Date(), model: String = "claude-opus-5",
                    in input: Int = 10, out: Int = 5, cw5: Int = 0, cw1: Int = 0, cr: Int = 0,
                    block: Int = 0, text: String = "ok", usage: Bool = true, cacheCreation: Bool = true,
-                   session: String = "s", cwd: String = "/Users/sam", branch: String? = nil, slug: String? = nil) -> String {
-    let extras = (branch.map { #","gitBranch":"\#($0)""# } ?? "") + (slug.map { #","slug":"\#($0)""# } ?? "")
+                   session: String = "s", cwd: String? = "/Users/sam", branch: String? = nil, slug: String? = nil) -> String {
+    let extras = (cwd.map { #","cwd":"\#($0)""# } ?? "")
+        + (branch.map { #","gitBranch":"\#($0)""# } ?? "") + (slug.map { #","slug":"\#($0)""# } ?? "")
     var usageJSON = ""
     if usage {
         let breakdown = cacheCreation ? #","cache_creation":{"ephemeral_5m_input_tokens":\#(cw5),"ephemeral_1h_input_tokens":\#(cw1)}"# : ""
         usageJSON = #","usage":{"input_tokens":\#(input),"cache_creation_input_tokens":\#(cw5 + cw1),"cache_read_input_tokens":\#(cr),"output_tokens":\#(out),"service_tier":"standard"\#(breakdown),"speed":"standard"}"#
     }
-    return #"{"parentUuid":"\#(UUID().uuidString)","isSidechain":false,"message":{"model":"\#(model)","id":"\#(id)","type":"message","role":"assistant","content":[{"type":"text","text":"\#(text)"}],"stop_reason":"end_turn","stop_sequence":null\#(usageJSON)},"apiBlockIndex":\#(block),"requestId":"req_\#(id)","type":"assistant","uuid":"\#(UUID().uuidString)","timestamp":"\#(iso(ts))","sessionId":"\#(session)","version":"2.1.276","cwd":"\#(cwd)"\#(extras)}"# + "\n"
+    return #"{"parentUuid":"\#(UUID().uuidString)","isSidechain":false,"message":{"model":"\#(model)","id":"\#(id)","type":"message","role":"assistant","content":[{"type":"text","text":"\#(text)"}],"stop_reason":"end_turn","stop_sequence":null\#(usageJSON)},"apiBlockIndex":\#(block),"requestId":"req_\#(id)","type":"assistant","uuid":"\#(UUID().uuidString)","timestamp":"\#(iso(ts))","sessionId":"\#(session)","version":"2.1.276"\#(extras)}"# + "\n"
 }
 
 /// The bookkeeping lines Claude Code rewrites as a session goes: `{"type":"…"` comes first.
@@ -1167,6 +1167,164 @@ final class TokenTextTests: XCTestCase {
         t.unpricedTokens = 1500
         XCTAssertTrue(TokenText.breakdown(t).hasSuffix(" · 1.5k from models without a price"))
     }
+
+    func testDollars() {
+        XCTAssertEqual(TokenText.dollars(0), "$0.00")
+        XCTAssertEqual(TokenText.dollars(0.041), "$0.04")
+        XCTAssertEqual(TokenText.dollars(5286.29), "$5,286.29")
+        XCTAssertEqual(TokenText.dollars(1_000_000), "$1,000,000.00")
+    }
+
+    func testModelNames() {
+        XCTAssertEqual(TokenText.modelName("claude-opus-5"), "Opus 5")
+        XCTAssertEqual(TokenText.modelName("claude-fable-5-1"), "Fable 5.1")
+        XCTAssertEqual(TokenText.modelName("claude-sonnet-4-6"), "Sonnet 4.6")
+        XCTAssertEqual(TokenText.modelName("claude-haiku-4-5-20251001"), "Haiku 4.5")
+        XCTAssertEqual(TokenText.modelName("claude-opus-4-1-20250805"), "Opus 4.1")
+        XCTAssertEqual(TokenText.modelName("mystery-1"), "mystery-1")
+        XCTAssertEqual(TokenText.modelName("claude-"), "claude-")
+    }
+}
+
+final class CostReportTests: XCTestCase {
+    // 2026-09-11 (a Friday) at 20:26:40 UTC.
+    let now = Date(timeIntervalSince1970: 1_789_000_000)
+    var utc: Calendar { var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c }
+
+    func record(_ daysAgo: Int, hour: Int = 12, model: String = "claude-sonnet-5", input: Int = 1000, output: Int = 100,
+                session: String? = nil) -> TokenRecord {
+        let day = utc.date(byAdding: .day, value: -daysAgo, to: utc.startOfDay(for: now))!
+        return TokenRecord(timestamp: day.addingTimeInterval(TimeInterval(hour) * 3600), model: model,
+                           input: input, output: output, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0,
+                           sessionId: session)
+    }
+
+    func testThirtyDaysOldestFirstWithEmptyDays() {
+        let report = CostReport.build([record(0), record(29)], now: now, calendar: utc)
+        XCTAssertEqual(report.days.count, 30)
+        XCTAssertEqual(report.days.last?.start, utc.startOfDay(for: now))
+        XCTAssertEqual(report.start, utc.date(byAdding: .day, value: -29, to: utc.startOfDay(for: now)))
+        for (a, b) in zip(report.days, report.days.dropFirst()) {
+            XCTAssertEqual(utc.dateComponents([.day], from: a.start, to: b.start).day, 1)
+        }
+        XCTAssertEqual(report.days.first?.totals.tokens, 1100)
+        XCTAssertEqual(report.days.last?.totals.tokens, 1100)
+        XCTAssertEqual(report.days.filter { $0.totals.tokens == 0 }.count, 28)
+    }
+
+    func testBucketsByCalendarDayAndIgnoresOutsideWindow() {
+        let records = [record(3, hour: 0), record(3, hour: 23), record(4, hour: 12),
+                       record(30), record(400), record(-1)]   // 30 days back, way back, and tomorrow
+        let report = CostReport.build(records, now: now, calendar: utc)
+        let threeBack = utc.date(byAdding: .day, value: -3, to: utc.startOfDay(for: now))!
+        XCTAssertEqual(report.days.first { $0.start == threeBack }?.totals.tokens, 2200)
+        XCTAssertEqual(report.total.tokens, 3300)
+        XCTAssertEqual(report.today.tokens, 0)
+    }
+
+    func testTodayAndTotalSums() {
+        let report = CostReport.build([record(0, hour: 1), record(0, hour: 20, output: 400), record(7)], now: now, calendar: utc)
+        XCTAssertEqual(report.today.tokens, 2500)
+        XCTAssertEqual(report.today.output, 500)
+        XCTAssertEqual(report.total.tokens, 3600)
+        // Sonnet 5 list price: $2 / M input, $10 / M output.
+        let expected: Double = (2.0 * 2000.0 + 10.0 * 500.0) / 1_000_000.0
+        XCTAssertEqual(report.today.cost, expected, accuracy: 1e-9)
+        XCTAssertEqual(report.total.cost, report.days.reduce(0) { $0 + $1.totals.cost }, accuracy: 1e-9)
+    }
+
+    func testModelsSortByCostThenTokensThenName() {
+        let records = [
+            record(1, model: "claude-opus-5", input: 1000, output: 100),        // $0.0075
+            record(1, model: "claude-sonnet-5", input: 1000, output: 100),      // $0.003
+            record(2, model: "claude-sonnet-5", input: 1000, output: 100),      // $0.006 total, most tokens
+            record(1, model: "mystery-b", input: 500, output: 0),               // unpriced, 500 tokens
+            record(1, model: "mystery-a", input: 500, output: 0),               // unpriced, 500 tokens
+            record(1, model: "mystery-c", input: 900, output: 0),               // unpriced, 900 tokens
+        ]
+        let report = CostReport.build(records, now: now, calendar: utc)
+        XCTAssertEqual(report.models.map(\.model), ["claude-opus-5", "claude-sonnet-5", "mystery-c", "mystery-a", "mystery-b"])
+        XCTAssertEqual(report.models[1].totals.tokens, 2200)
+        XCTAssertEqual(report.models[2].totals.unpricedTokens, 900)
+        XCTAssertEqual(report.total.unpricedTokens, 1900)
+    }
+
+    func testEmptyRecords() {
+        let report = CostReport.build([], now: now, calendar: utc)
+        XCTAssertEqual(report.days.count, 30)
+        XCTAssertTrue(report.models.isEmpty)
+        XCTAssertTrue(report.projects.isEmpty)
+        XCTAssertEqual(report.total, TokenTotals())
+        XCTAssertEqual(report.today, TokenTotals())
+    }
+
+    func testRangeSetsTheDayCount() {
+        let records = [record(0), record(6), record(7), record(29), record(30), record(89), record(90)]
+        for range in CostRange.allCases {
+            let report = CostReport.build(records, now: now, calendar: utc, dayCount: range.days)
+            XCTAssertEqual(report.days.count, range.days, "\(range)")
+            XCTAssertEqual(report.start, utc.date(byAdding: .day, value: 1 - range.days, to: utc.startOfDay(for: now)), "\(range)")
+            XCTAssertEqual(report.days.last?.start, utc.startOfDay(for: now), "\(range)")
+        }
+        XCTAssertEqual(CostReport.build(records, now: now, calendar: utc, dayCount: 7).total.tokens, 2200)
+        XCTAssertEqual(CostReport.build(records, now: now, calendar: utc, dayCount: 30).total.tokens, 4400)
+        XCTAssertEqual(CostReport.build(records, now: now, calendar: utc, dayCount: 90).total.tokens, 6600)
+    }
+
+    func testCostRangeCoversNinetyDaysAndRetentionOneMore() {
+        XCTAssertEqual(CostRange.allCases.map(\.days), [7, 30, 90])
+        XCTAssertEqual(CostRange.month.days, CostReport.dayCount)
+        XCTAssertEqual(CostRange.retentionDays, 91)
+        XCTAssertEqual(TokenStore.retention, 91 * 86400)
+        XCTAssertEqual(CostRange.allCases.map(\.axisStride), [1, 7, 14])
+        XCTAssertEqual(CostRange.quarter.title, "90 days")
+    }
+
+    func testProjectsGroupBySessionFolderCostliestFirst() {
+        let records = [
+            record(1, model: "claude-opus-5", session: "a"),      // $0.0075 in ~/x
+            record(2, model: "claude-sonnet-5", session: "a"),    // $0.003 in ~/x
+            record(1, model: "claude-sonnet-5", session: "b"),    // $0.003 in ~/y
+            record(1, model: "claude-sonnet-5", session: "c"),    // $0.003, session without a cwd
+            record(1, model: "claude-sonnet-5", session: nil),    // $0.003, no session at all
+            record(1, model: "claude-sonnet-5", session: "d"),    // $0.003 in ~/y again
+            record(40, model: "claude-opus-5", session: "b"),     // outside the window
+        ]
+        let folders = ["a": "/Users/sam/x", "b": "/Users/sam/y", "d": "/Users/sam/y"]
+        let report = CostReport.build(records, now: now, calendar: utc, folders: folders)
+        XCTAssertEqual(report.projects.map(\.folder), ["/Users/sam/x", "/Users/sam/y", nil])
+        XCTAssertEqual(report.projects.map(\.totals.tokens), [2200, 2200, 2200])
+        XCTAssertEqual(report.projects[0].totals.cost, 0.0105, accuracy: 1e-9)
+        XCTAssertEqual(report.projects[1].totals.cost, 0.006, accuracy: 1e-9)
+        XCTAssertEqual(report.projects.reduce(0) { $0 + $1.totals.tokens }, report.total.tokens)
+        XCTAssertEqual(report.projects.map(\.id), ["/Users/sam/x", "/Users/sam/y", ""])
+    }
+
+    func testProjectsStayEmptyWithoutFolders() {
+        let report = CostReport.build([record(0, session: "a"), record(1)], now: now, calendar: utc)
+        XCTAssertTrue(report.projects.isEmpty)
+        XCTAssertEqual(report.total.tokens, 2200)
+        XCTAssertEqual(CostReport.build([record(0, session: "a")], now: now, calendar: utc, folders: [:])
+                           .projects.map(\.folder), [nil])
+    }
+
+    func testShareText() {
+        XCTAssertEqual(CostView.shareText(37, of: 100, in: .month), "37% of the last 30 days' tokens")
+        XCTAssertEqual(CostView.shareText(1, of: 3, in: .week), "33% of the last 7 days' tokens")
+        XCTAssertEqual(CostView.shareText(0, of: 0, in: .quarter), "No tokens in the last 90 days")
+    }
+
+    @MainActor func testCostWindowStartIsTwentyNineDaysBeforeMidnight() {
+        let start = TokenStore.costWindowStart(now: now, calendar: utc)
+        XCTAssertEqual(start, utc.date(byAdding: .day, value: -29, to: utc.startOfDay(for: now)))
+        XCTAssertEqual(start, CostReport.build([], now: now, calendar: utc).start)
+    }
+
+    func testAxisDollars() {
+        XCTAssertEqual(CostView.axisDollars(0), "$0")
+        XCTAssertEqual(CostView.axisDollars(12.6), "$13")
+        XCTAssertEqual(CostView.axisDollars(1500), "$1.5k")
+    }
 }
 
 final class SessionScanTests: XCTestCase {
@@ -1228,6 +1386,22 @@ final class SessionScanTests: XCTestCase {
         XCTAssertEqual(sessions.map(\.sessionId), ["a"])
         XCTAssertEqual(sessions[0].lastPrompt?.count, 121)
         XCTAssertTrue(sessions[0].lastPrompt!.hasSuffix("…"))
+    }
+
+    @MainActor func testStoreOffersSessionFoldersToTheCostReport() async throws {
+        let root = try tempTranscriptRoot()
+        try writeTranscript(root, "p/a.jsonl",
+            assistantLine(id: "msg_a1", in: 10, out: 10, session: "a", cwd: "/Users/sam/x")
+            + assistantLine(id: "msg_a2", in: 20, out: 20, session: "a"))
+        try writeTranscript(root, "p/b.jsonl", assistantLine(id: "msg_b1", in: 1, out: 1, session: "b", cwd: nil))
+        let store = TokenStore()
+        store.scanner = TokenScanner(root: root, cacheURL: nil)
+        await store.refresh(reason: "test")
+        XCTAssertEqual(store.sessionFolders, ["a": "/Users/sam/x"])
+        let report = store.costReport(range: .week)
+        XCTAssertEqual(report.days.count, 7)
+        XCTAssertEqual(report.projects.map(\.folder), ["/Users/sam/x", nil])
+        XCTAssertEqual(report.projects.map(\.totals.tokens), [60, 2])
     }
 
     func testSessionMetaSurvivesTheCache() async throws {

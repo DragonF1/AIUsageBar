@@ -145,9 +145,12 @@ actor TokenScanner {
         self.cacheURL = cacheURL
     }
 
-    /// Bumped whenever the cache shape changes, which forces a full rescan on the next launch.
-    /// 2: records carry a session id and the cache holds session metadata.
-    static let cacheVersion = 2
+    /// Bumped whenever the cache shape or the retention changes, which forces a full rescan on
+    /// the next launch. 2: records carry a session id and the cache holds session metadata.
+    /// 3: retention grew from 8 to 31 days; files already read to their end would otherwise
+    /// never give back the older lines that a version-2 cache had pruned. 4: retention grew
+    /// again, to 91 days, for the cost window's 90-day range.
+    static let cacheVersion = 4
 
     private struct Cache: Codable {
         static let currentVersion = TokenScanner.cacheVersion

@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let antigravity = AntigravityStore()
     private let status = StatusStore()
     private let tokens = TokenStore()
+    private let antigravityTokens = AntigravityTokenStore()
     private let monitor = QuotaMonitor(notifier: UserNotifier(),
                                        thresholds: AppConfig.loadSettings().notificationThresholds)
 
@@ -15,11 +16,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         store.monitor = monitor
         antigravity.monitor = monitor
-        controller = StatusItemController(store: store, antigravity: antigravity, status: status, tokens: tokens, monitor: monitor)
+        controller = StatusItemController(store: store, antigravity: antigravity, status: status, tokens: tokens,
+                                          antigravityTokens: antigravityTokens, monitor: monitor)
         store.start()
         antigravity.start()
         status.start()
         tokens.start()
+        antigravityTokens.start()
         // The login item follows the menu switch (on by default); re-registers if it was
         // switched off in System Settings while the switch stayed on.
         LoginItem.apply(Preferences.startAtLogin)
