@@ -30,8 +30,8 @@ struct OAuthCredential: Equatable {
     }
 }
 
-/// Whole credential blob as stored. `raw` keeps every key so a write-back
-/// never drops fields this app does not know about.
+/// Whole credential blob as stored. `raw` keeps every key the item holds, read-only: the app
+/// never writes the credential back (see `OAuthRefresher`).
 struct StoredCredentials {
     var raw: [String: Any]
     var oauth: OAuthCredential
@@ -45,21 +45,6 @@ struct StoredCredentials {
         self.raw = raw
         self.oauth = oauth
         self.source = source
-    }
-
-    /// Merge a token-endpoint response into the stored JSON.
-    func merging(accessToken: String, refreshToken: String?, expiresIn: Double?, now: Date = Date()) -> StoredCredentials {
-        var copy = raw
-        var sub = raw["claudeAiOauth"] as? [String: Any] ?? [:]
-        sub["accessToken"] = accessToken
-        if let refreshToken, !refreshToken.isEmpty { sub["refreshToken"] = refreshToken }
-        if let expiresIn { sub["expiresAt"] = Int((now.timeIntervalSince1970 + expiresIn) * 1000) }
-        copy["claudeAiOauth"] = sub
-        return StoredCredentials(raw: copy, source: source)!
-    }
-
-    func serialized() throws -> Data {
-        try JSONSerialization.data(withJSONObject: raw, options: [.sortedKeys, .withoutEscapingSlashes])
     }
 }
 
@@ -77,9 +62,9 @@ enum CredentialError: LocalizedError {
     }
 }
 
-/// Reads and writes Claude Code's credential. Goes through `/usr/bin/security`
-/// on purpose: that binary is already on the Keychain item's ACL (Claude Code
-/// writes through it), so no "allow access" dialog appears.
+/// Reads Claude Code's credential. Goes through `/usr/bin/security` on purpose:
+/// that binary is already on the Keychain item's ACL (Claude Code writes through
+/// it), so no "allow access" dialog appears. Nothing here writes.
 struct CredentialStore {
     static let service = "Claude Code-credentials"
     static let fallbackFile = FileManager.default.homeDirectoryForCurrentUser
@@ -100,24 +85,6 @@ struct CredentialStore {
         return try parse(String(decoding: data, as: UTF8.self), source: .file(fallbackFile))
     }
 
-    /// Writes back, keeping the source (Keychain item or file) the credential came from.
-    /// Backs up the previous JSON so a bad write is recoverable.
-    func write(_ creds: StoredCredentials) throws {
-        let data = try creds.serialized()
-        let json = String(decoding: data, as: UTF8.self)
-        try backupCurrent()
-        switch creds.source {
-        case .keychain(let account):
-            let out = try Shell.run("/usr/bin/security", [
-                "add-generic-password", "-U", "-a", account, "-s", service, "-w", json,
-            ])
-            guard out.status == 0 else { throw CredentialError.securityFailed(out.stderr.trimmed) }
-        case .file(let url):
-            try data.write(to: url, options: .atomic)
-            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-        }
-    }
-
     // MARK: - internals
 
     private func parse(_ text: String, source: StoredCredentials.Source) throws -> StoredCredentials {
@@ -129,7 +96,7 @@ struct CredentialStore {
         return creds
     }
 
-    /// The `acct` attribute of the Keychain item, needed to rewrite it. nil when absent.
+    /// The `acct` attribute of the Keychain item, kept as the credential's source. nil when absent.
     private func keychainAccount() throws -> String? {
         let out = try Shell.run("/usr/bin/security", ["find-generic-password", "-s", service])
         guard out.status == 0 else { return nil }
@@ -138,15 +105,6 @@ struct CredentialStore {
         let rest = out.stdout[range.upperBound...]
         guard let end = rest.firstIndex(of: "\"") else { return nil }
         return String(rest[..<end])
-    }
-
-    private func backupCurrent() throws {
-        guard let current = try? read(), let data = try? current.serialized() else { return }
-        let dir = AppPaths.supportDirectory
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent("creds.bak")
-        try data.write(to: url, options: .atomic)
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 }
 

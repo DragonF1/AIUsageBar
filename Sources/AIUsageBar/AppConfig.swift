@@ -14,8 +14,8 @@ enum AppConfig {
     ///   "notifications": {"thresholds": [80, 95]}}`
     struct Settings: Codable, Equatable {
         struct Claude: Codable, Equatable {
-            /// Let the app run Claude Code's refresh-token flow and write the new tokens into
-            /// Claude Code's own credential item when the stored access token has expired.
+            /// Let the app start `claude` in the background when the stored access token has
+            /// expired, so Claude Code refreshes its own credential (the app never writes it).
             /// Off by default: the app then only reads whatever Claude Code keeps fresh.
             var refresh: Bool?
         }

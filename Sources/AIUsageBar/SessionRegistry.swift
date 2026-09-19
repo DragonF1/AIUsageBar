@@ -23,18 +23,23 @@ struct LiveSession: Decodable, Equatable, Sendable, Identifiable {
 }
 
 /// Reads the registry and keeps only sessions whose process is still alive: Claude Code does not
-/// always get to delete its file on the way out, so a crashed or killed session lingers.
+/// always get to delete its file on the way out, so a crashed or killed session lingers. The
+/// app's own token-refresh probe (a `claude` started in `ClaudeCLIProbe.directory`) is left out.
 struct SessionRegistry: Sendable {
     var root: URL
     var isAlive: @Sendable (Int32) -> Bool
+    /// Working directories whose sessions are not the user's.
+    var hiddenFolders: Set<String>
 
     static let defaultRoot = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".claude/sessions", isDirectory: true)
 
     init(root: URL = SessionRegistry.defaultRoot,
-         isAlive: @escaping @Sendable (Int32) -> Bool = { kill($0, 0) == 0 }) {
+         isAlive: @escaping @Sendable (Int32) -> Bool = { kill($0, 0) == 0 },
+         hiddenFolders: Set<String> = [ClaudeCLIProbe.directory.path]) {
         self.root = root
         self.isAlive = isAlive
+        self.hiddenFolders = hiddenFolders
     }
 
     func live() -> [LiveSession] {
@@ -45,6 +50,7 @@ struct SessionRegistry: Sendable {
             guard let data = try? Data(contentsOf: root.appendingPathComponent(name)),
                   let session = try? decoder.decode(LiveSession.self, from: data),
                   session.kind ?? "interactive" == "interactive",
+                  !hiddenFolders.contains(session.cwd ?? ""),
                   isAlive(session.pid) else { continue }
             // A resumed session can briefly leave two files claiming the same id; keep the newest.
             if let old = found[session.sessionId], (old.updatedAt ?? 0) > (session.updatedAt ?? 0) { continue }

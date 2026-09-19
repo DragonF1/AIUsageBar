@@ -132,27 +132,53 @@ final class ClientTests: XCTestCase {
     }
 }
 
+/// Stands in for `claude`: does to the credential file whatever the closure says, then reports
+/// whether the refresher's own check sees a change.
+final class FakeCLI: ClaudeCLITouch, @unchecked Sendable {
+    var runs = 0
+    let effect: @Sendable () throws -> Void
+    init(_ effect: @escaping @Sendable () throws -> Void = {}) { self.effect = effect }
+    func run(until done: @escaping @Sendable () -> Bool) async throws -> Bool {
+        runs += 1
+        try effect()
+        return done()
+    }
+}
+
+/// What a `claude` run does on success: rewrites the credential with a new access token.
+func rewriteCredential(_ file: URL, accessToken: String, refresh: String = "rt-2") -> @Sendable () throws -> Void {
+    { @Sendable in
+        var json = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
+        var sub = json["claudeAiOauth"] as! [String: Any]
+        sub["accessToken"] = accessToken
+        sub["refreshToken"] = refresh
+        sub["expiresAt"] = (Date().timeIntervalSince1970 + 28800) * 1000
+        json["claudeAiOauth"] = sub
+        try JSONSerialization.data(withJSONObject: json).write(to: file)
+    }
+}
+
 final class RefreshTests: XCTestCase {
-    func makeRefresher(file: URL, http: FakeHTTP, cli: Bool = false, last: Date? = nil, enabled: Bool = true) -> OAuthRefresher {
-        var r = OAuthRefresher(http: http, store: fileStore(file), enabled: enabled)
-        r.isCLIRunning = { cli }
+    func makeRefresher(file: URL, cli: FakeCLI, running: Bool = false, last: Date? = nil, enabled: Bool = true) -> OAuthRefresher {
+        var r = OAuthRefresher(store: fileStore(file), cli: cli, enabled: enabled)
+        r.isCLIRunning = { running }
         r.lastAttempt = { last }
         r.recordAttempt = { _ in }
         return r
     }
 
-    /// Default configuration: an expired token is reported, never refreshed, and the file is left alone.
-    func testDisabledByDefaultReportsExpiryWithoutTouchingNetworkOrFile() async throws {
+    /// Default configuration: an expired token is reported, `claude` is never started, and the file is left alone.
+    func testDisabledByDefaultReportsExpiryWithoutStartingClaude() async throws {
         let file = try tempCredentialFile(expiresAt: (Date().timeIntervalSince1970 - 3600) * 1000)
         let before = try Data(contentsOf: file)
-        let http = FakeHTTP([])
+        let cli = FakeCLI(rewriteCredential(file, accessToken: "at-new"))
         do {
-            _ = try await makeRefresher(file: file, http: http, enabled: false).refreshIfNeeded(force: false)
+            _ = try await makeRefresher(file: file, cli: cli, enabled: false).refreshIfNeeded(force: false)
             XCTFail("expected disabled")
         } catch let e as RefreshError {
             XCTAssertEqual(e, .disabled)
         }
-        XCTAssertTrue(http.requests.isEmpty)
+        XCTAssertEqual(cli.runs, 0)
         XCTAssertEqual(try Data(contentsOf: file), before)
         XCTAssertFalse(AppConfig.Settings().refreshesClaudeToken)
         XCTAssertTrue(AppConfig.Settings(claude: .init(refresh: true)).refreshesClaudeToken)
@@ -161,83 +187,149 @@ final class RefreshTests: XCTestCase {
     /// Even when disabled, a token Claude Code already refreshed is used as is.
     func testDisabledStillReturnsFreshTokenSomebodyElseWrote() async throws {
         let file = try tempCredentialFile(expiresAt: (Date().timeIntervalSince1970 + 3600) * 1000)
-        let creds = try await makeRefresher(file: file, http: FakeHTTP([]), enabled: false).refreshIfNeeded(force: false)
+        let creds = try await makeRefresher(file: file, cli: FakeCLI(), enabled: false).refreshIfNeeded(force: false)
         XCTAssertEqual(creds.oauth.accessToken, "at-old")
     }
 
     func testSkipsWhenNotExpired() async throws {
         let file = try tempCredentialFile(expiresAt: (Date().timeIntervalSince1970 + 3600) * 1000)
-        let http = FakeHTTP([])
-        let creds = try await makeRefresher(file: file, http: http).refreshIfNeeded(force: false)
+        let cli = FakeCLI(rewriteCredential(file, accessToken: "at-new"))
+        let creds = try await makeRefresher(file: file, cli: cli).refreshIfNeeded(force: false)
         XCTAssertEqual(creds.oauth.accessToken, "at-old")
-        XCTAssertTrue(http.requests.isEmpty)
+        XCTAssertEqual(cli.runs, 0)
     }
 
-    func testRefreshesAndWritesBackPreservingUnknownKeys() async throws {
+    /// The whole point: the app starts `claude`, Claude Code rewrites its own credential, the app reads it back.
+    func testStartsClaudeAndReadsBackWhatItWrote() async throws {
         let file = try tempCredentialFile(expiresAt: (Date().timeIntervalSince1970 - 7200) * 1000)
-        let body = #"{"access_token":"at-new","refresh_token":"rt-2","expires_in":28800}"#.data(using: .utf8)!
-        let http = FakeHTTP([HTTPResponse(status: 200, headers: [:], body: body)])
-        let creds = try await makeRefresher(file: file, http: http).refreshIfNeeded(force: false)
+        let cli = FakeCLI(rewriteCredential(file, accessToken: "at-new"))
+        let creds = try await makeRefresher(file: file, cli: cli).refreshIfNeeded(force: false)
+        XCTAssertEqual(cli.runs, 1)
         XCTAssertEqual(creds.oauth.accessToken, "at-new")
         XCTAssertEqual(creds.oauth.refreshToken, "rt-2")
         XCTAssertFalse(creds.oauth.isExpired())
-
-        let req = http.requests[0]
-        XCTAssertEqual(req.url?.host, "platform.claude.com")
-        let sent = try JSONSerialization.jsonObject(with: req.httpBody!) as! [String: String]
-        XCTAssertEqual(sent["grant_type"], "refresh_token")
-        XCTAssertEqual(sent["refresh_token"], "rt-1")
-        XCTAssertEqual(sent["client_id"], OAuthRefresher.clientID)
-
         let onDisk = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as! [String: Any]
         let sub = onDisk["claudeAiOauth"] as! [String: Any]
-        XCTAssertEqual(sub["accessToken"] as? String, "at-new")
-        XCTAssertEqual(sub["rateLimitTier"] as? String, "default_claude_max_5x")   // untouched
-        XCTAssertEqual(sub["subscriptionType"] as? String, "max")
+        XCTAssertEqual(sub["rateLimitTier"] as? String, "default_claude_max_5x")
     }
 
-    func testFallsBackToConsoleOn404() async throws {
-        let file = try tempCredentialFile(expiresAt: 0)
-        let body = #"{"access_token":"at-new","expires_in":100}"#.data(using: .utf8)!
-        let http = FakeHTTP([HTTPResponse(status: 404, headers: [:], body: Data()),
-                             HTTPResponse(status: 200, headers: [:], body: body)])
-        let creds = try await makeRefresher(file: file, http: http).refreshIfNeeded(force: false)
+    /// A 401 with an unexpired `expiresAt` forces a run too.
+    func testForcedRunIgnoresExpiry() async throws {
+        let file = try tempCredentialFile(expiresAt: (Date().timeIntervalSince1970 + 3600) * 1000)
+        let cli = FakeCLI(rewriteCredential(file, accessToken: "at-new"))
+        let creds = try await makeRefresher(file: file, cli: cli).refreshIfNeeded(force: true)
+        XCTAssertEqual(cli.runs, 1)
         XCTAssertEqual(creds.oauth.accessToken, "at-new")
-        XCTAssertEqual(creds.oauth.refreshToken, "rt-1")    // kept when response omits it
-        XCTAssertEqual(http.requests.map { $0.url!.host! }, ["platform.claude.com", "console.anthropic.com"])
     }
 
-    func testDoesNotRetryAfter400() async throws {
+    /// `claude` ran but left the credential alone (signed out, offline): say so, keep the old one.
+    func testReportsWhenClaudeDidNotRefresh() async throws {
         let file = try tempCredentialFile(expiresAt: 0)
-        let http = FakeHTTP([HTTPResponse(status: 400, headers: [:], body: #"{"error":"invalid_grant"}"#.data(using: .utf8)!)])
-        do { _ = try await makeRefresher(file: file, http: http).refreshIfNeeded(force: false); XCTFail() }
-        catch let e as RefreshError {
-            if case .rejected(400, _) = e {} else { XCTFail("\(e)") }
-        }
-        XCTAssertEqual(http.requests.count, 1)
+        let cli = FakeCLI()
+        do { _ = try await makeRefresher(file: file, cli: cli).refreshIfNeeded(force: false); XCTFail() }
+        catch let e as RefreshError { XCTAssertEqual(e, .cliDidNotRefresh) }
+        XCTAssertEqual(cli.runs, 1)
+    }
+
+    func testNoRefreshTokenNeverStartsClaude() async throws {
+        let file = try tempCredentialFile(expiresAt: 0, refresh: "")
+        let cli = FakeCLI()
+        do { _ = try await makeRefresher(file: file, cli: cli).refreshIfNeeded(force: false); XCTFail() }
+        catch let e as RefreshError { XCTAssertEqual(e, .noRefreshToken) }
+        XCTAssertEqual(cli.runs, 0)
     }
 
     func testThrottled() async throws {
         let file = try tempCredentialFile(expiresAt: 0)
-        let http = FakeHTTP([])
-        do { _ = try await makeRefresher(file: file, http: http, last: Date().addingTimeInterval(-10)).refreshIfNeeded(force: false); XCTFail() }
+        let cli = FakeCLI()
+        do { _ = try await makeRefresher(file: file, cli: cli, last: Date().addingTimeInterval(-10)).refreshIfNeeded(force: false); XCTFail() }
         catch let e as RefreshError { XCTAssertEqual(e, .throttled) }
-        XCTAssertTrue(http.requests.isEmpty)
+        XCTAssertEqual(cli.runs, 0)
     }
 
     func testCLIOwnsFreshExpiry() async throws {
         let file = try tempCredentialFile(expiresAt: (Date().timeIntervalSince1970 - 30) * 1000)
-        let http = FakeHTTP([])
-        do { _ = try await makeRefresher(file: file, http: http, cli: true).refreshIfNeeded(force: false); XCTFail() }
+        let cli = FakeCLI()
+        do { _ = try await makeRefresher(file: file, cli: cli, running: true).refreshIfNeeded(force: false); XCTFail() }
         catch let e as RefreshError { XCTAssertEqual(e, .cliOwnsRefresh) }
+        XCTAssertEqual(cli.runs, 0)
     }
 
-    func testCLIRunningButLongExpiredRefreshes() async throws {
+    func testCLIRunningButLongExpiredStartsAnother() async throws {
         let file = try tempCredentialFile(expiresAt: (Date().timeIntervalSince1970 - 3600) * 1000)
-        let body = #"{"access_token":"at-new","expires_in":100}"#.data(using: .utf8)!
-        let http = FakeHTTP([HTTPResponse(status: 200, headers: [:], body: body)])
-        let creds = try await makeRefresher(file: file, http: http, cli: true).refreshIfNeeded(force: false)
+        let cli = FakeCLI(rewriteCredential(file, accessToken: "at-new"))
+        let creds = try await makeRefresher(file: file, cli: cli, running: true).refreshIfNeeded(force: false)
         XCTAssertEqual(creds.oauth.accessToken, "at-new")
+    }
+
+    /// The real probe with no binary to run refuses before touching anything.
+    func testProbeWithoutBinaryIsMissing() async throws {
+        let probe = ClaudeCLIProbe(binary: nil)
+        do { _ = try await probe.run(until: { true }); XCTFail() }
+        catch let e as RefreshError { XCTAssertEqual(e, .cliMissing) }
+    }
+
+    func testLocateTakesTheFirstExecutableCandidate() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("probe-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let plain = dir.appendingPathComponent("plain"), exec = dir.appendingPathComponent("exec")
+        try "x".write(to: plain, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\n".write(to: exec, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: exec.path)
+        XCTAssertEqual(ClaudeCLIProbe.locate(candidates: [dir.appendingPathComponent("none").path, plain.path, exec.path]), exec.path)
+    }
+
+    func testTranscriptDirectoryManglesLikeClaudeCode() {
+        let root = URL(fileURLWithPath: "/r")
+        XCTAssertEqual(ClaudeCLIProbe.transcriptDirectory(for: "/Users/x/Library/Application Support/AIUsageBar/claude-probe", under: root).path,
+                       "/r/-Users-x-Library-Application-Support-AIUsageBar-claude-probe")
+        XCTAssertEqual(ClaudeCLIProbe.transcriptDirectory(for: "/tmp/a.b_c", under: root).lastPathComponent, "-tmp-a-b-c")
+    }
+
+    func testProbeEnvironmentDropsOtherAccountsAndNesting() {
+        let env = ClaudeCLIProbe.environment(base: [
+            "PATH": "/usr/bin:/bin", "HOME": "/Users/x", "ANTHROPIC_API_KEY": "k", "ANTHROPIC_BASE_URL": "u",
+            "CLAUDE_CODE_OAUTH_TOKEN": "t", "CLAUDECODE": "1", "LANG": "en_US.UTF-8",
+        ])
+        XCTAssertNil(env["ANTHROPIC_API_KEY"])
+        XCTAssertNil(env["ANTHROPIC_BASE_URL"])
+        XCTAssertNil(env["CLAUDE_CODE_OAUTH_TOKEN"])
+        XCTAssertNil(env["CLAUDECODE"])
+        XCTAssertEqual(env["LANG"], "en_US.UTF-8")
+        XCTAssertEqual(env["DISABLE_AUTOUPDATER"], "1")
+        XCTAssertEqual(env["TERM"], "xterm-256color")
+        XCTAssertTrue(env["PATH"]!.hasSuffix("/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"))
+        XCTAssertTrue(env["PATH"]!.hasPrefix("/Users/"))
+        XCTAssertEqual(env["PWD"], ClaudeCLIProbe.directory.path)
+    }
+
+    /// What the pty delivers: cursor moves between words, colours, and the selection marker.
+    func testScreenStripsEscapesAndWhitespace() {
+        var screen = ProbeScreen()
+        screen.append(Data("\u{1b}[2J\u{1b}[1;1H\u{1b}[1mQuick\u{1b}[0m \u{1b}[3;5Hsafety check:\r\n".utf8))
+        screen.append(Data(" Is this a project you created or one you trust?\u{1b}]0;title\u{7}\n".utf8))
+        screen.append(Data("\u{1b}[36m❯ No, exit\u{1b}[39m\n  Yes, I trust this folder\n\u{1b}(B".utf8))
+        XCTAssertEqual(screen.text, "Quicksafetycheck:Isthisaprojectyoucreatedoroneyoutrust?❯No,exitYes,Itrustthisfolder")
+        XCTAssertTrue(screen.showsTrustQuestion)
+        XCTAssertEqual(screen.trustDefault, .decline)
+
+        var accept = ProbeScreen()
+        accept.append(Data("Do you trust the files in this folder?\n❯ Yes, proceed\n  No, exit".utf8))
+        XCTAssertTrue(accept.showsTrustQuestion)
+        XCTAssertEqual(accept.trustDefault, .accept)
+
+        var prompt = ProbeScreen()
+        prompt.append(Data("\u{1b}[2K> Try \"fix lint errors\"".utf8))
+        XCTAssertFalse(prompt.showsTrustQuestion)
+        XCTAssertNil(prompt.trustDefault)
+    }
+
+    func testScreenKeepsOnlyTheTail() {
+        var screen = ProbeScreen()
+        screen.append(Data(String(repeating: "a", count: ProbeScreen.keep + 100).utf8))
+        screen.append(Data("❯ Yes".utf8))
+        XCTAssertEqual(screen.text.count, ProbeScreen.keep)
+        XCTAssertEqual(screen.trustDefault, .accept)
     }
 }
 

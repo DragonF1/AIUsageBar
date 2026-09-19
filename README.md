@@ -33,7 +33,7 @@ There is no Apple developer certificate behind the build, which is why there is 
 
 Optional. The app reads `~/.config/aiusagebar/` and never writes there.
 
-- `config.json` has three keys. `{"claude": {"refresh": true}}` lets the app refresh Claude Code's token itself (see "How it works"). `{"notifications": {"thresholds": [80, 95]}}` sets the percentages the notifications warn at (default 80 and 95; an empty list keeps only the used-up, pace and reset notices). `"resume"` changes what "Resume" in the sessions window runs. Default is a new Terminal window with `claude --resume <id>` in the session's folder. To go through your own launcher script instead (say one that adds `--permission-mode` or `--effort` flags):
+- `config.json` has three keys. `{"claude": {"refresh": true}}` lets the app start `claude` in the background when the stored token has expired, so Claude Code refreshes it (see "How it works"). `{"notifications": {"thresholds": [80, 95]}}` sets the percentages the notifications warn at (default 80 and 95; an empty list keeps only the used-up, pace and reset notices). `"resume"` changes what "Resume" in the sessions window runs. Default is a new Terminal window with `claude --resume <id>` in the session's folder. To go through your own launcher script instead (say one that adds `--permission-mode` or `--effort` flags):
 
   ```json
   {"resume": {"launcher": "~/bin/claude-launch.sh", "env_file": "~/bin/claude-launch.env"}}
@@ -64,9 +64,9 @@ Each usage row ends with "At this pace: ~62% at reset" or, in orange, "At this p
 
 ## How it works
 
-- Token: Keychain item `Claude Code-credentials` (falls back to `~/.claude/.credentials.json`). Read and written through `/usr/bin/security`, the same path Claude Code uses, so no Keychain access prompt.
+- Token: Keychain item `Claude Code-credentials` (falls back to `~/.claude/.credentials.json`). Read through `/usr/bin/security`, the same path Claude Code uses, so no Keychain access prompt. Nothing in this app ever writes the credential.
 - Data: `GET https://api.anthropic.com/api/oauth/usage` with `Authorization: Bearer` and `anthropic-beta: oauth-2025-04-20`. Rows come from the `limits` array (session, weekly all models, weekly per model) plus the `extra_usage` credits when the account has them and the switch is on.
-- Token refresh: off by default. When the stored access token has expired the app says so and keeps showing the last numbers until Claude Code refreshes it (which it does whenever `claude` runs). With `{"claude": {"refresh": true}}` in `config.json` the app instead runs the standard refresh-token flow against `platform.claude.com/v1/oauth/token` (fallback `console.anthropic.com`) and writes the new tokens back so Claude Code picks them up too. Guards: re-reads the Keychain first, at most one attempt per minute, and defers to a running `claude` process for the first 3 minutes after expiry. The previous credential is backed up to `~/Library/Application Support/AIUsageBar/creds.bak`. Refresh tokens are single-use, which is why this is opt-in: it means letting a second program rotate Claude Code's login.
+- Token refresh: off by default. When the stored access token has expired the app says so and keeps showing the last numbers until Claude Code refreshes it (which it does whenever `claude` runs). With `{"claude": {"refresh": true}}` in `config.json` the app does the running for you: it starts the real `claude` on a hidden pseudo-terminal, in an empty folder of its own (`~/Library/Application Support/AIUsageBar/claude-probe`), waits for Claude Code to refresh its own credential, then reads the Keychain again. The session gets no tools, no MCP servers, no hooks, no Remote Control and the classic renderer (a `--settings` overlay for that launch only; your saved settings stay), and is never given a prompt. The first run stops at Claude Code's folder-trust question; if the credential has not moved after 7 s the probe answers "yes" for its empty folder and the session starts. It is then closed the way you would close it (Esc, Ctrl-C twice, `/exit`), so Claude Code's own exit hooks run, and the registry and transcript files of that empty session are removed. Guards: re-reads the Keychain first, at most one attempt per minute, gives up after 20 s, and defers to a `claude` you already have running for the first 3 minutes after expiry. `claude-probe/last-run.txt` records what the last run saw and how it ended. The probe never shows in the sessions window.
 - Status: polls `status.claude.com/api/v2/summary.json` every 5 minutes and shows the current incident (indicator, affected products, latest update, link to the status page) above the usage rows; "All systems operational" when clear. Every poll after the first is a conditional request (`If-None-Match` with the ETag the page sent), so an unchanged page answers 304 with no body and the last summary stays.
 - Rate limits: honors `Retry-After` on 429, otherwise backs off 15 minutes, and keeps showing the last good numbers greyed out.
 
@@ -136,7 +136,7 @@ The same "Cost" section as the Claude tab, under the four limit rows: "Today", "
 ## Caveats
 
 - The usage and token endpoints are internal and undocumented; Anthropic and Google may change them. The same goes for Antigravity's conversation databases.
-- Refresh tokens rotate. With `claude.refresh` on, if a `/login` prompt ever shows up in Claude Code right after this app refreshed, sign in again (or restore `creds.bak` into the Keychain).
+- "Started `claude` but the token stayed expired": with `claude.refresh` on, the probe ran and Claude Code did not write a fresh token in 20 s. Run `claude` yourself; it may want a fresh sign-in. `~/Library/Application Support/AIUsageBar/claude-probe/last-run.txt` shows the screen the probe saw.
 - Not affiliated with Anthropic or Google.
 
 ## License
