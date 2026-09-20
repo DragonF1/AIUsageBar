@@ -66,12 +66,7 @@ final class TokenWindowController {
 
     private func makeWindow() -> PanelWindow {
         let hosting = NSHostingController(rootView: makeView(self))
-        let window = PanelWindow(contentViewController: hosting)
-        window.title = title
-        window.styleMask = [.titled, .closable, .resizable]
-        window.isReleasedWhenClosed = false
-        // An accessory app has no Dock icon to bring the window back with, so it stays on top.
-        window.level = .floating
+        let window = PanelWindow.make(title: title, hosting: hosting, resizable: true)
         window.setContentSize(size)
         window.center()
         // After center(), so a frame saved from an earlier showing wins over the default spot.
@@ -84,19 +79,5 @@ final class TokenWindowController {
         }
         self.window = window
         return window
-    }
-}
-
-/// Esc and ⌘W close it; the accessory app has no menu bar to route ⌘W through.
-final class PanelWindow: NSWindow {
-    override func keyDown(with event: NSEvent) {
-        let isEscape = event.keyCode == 53
-        let isCommandW = event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command
-            && event.charactersIgnoringModifiers == "w"
-        if isEscape || isCommandW {
-            performClose(nil)
-        } else {
-            super.keyDown(with: event)
-        }
     }
 }

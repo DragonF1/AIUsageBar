@@ -186,6 +186,13 @@ struct PaceLine: Equatable {
         guard projectedPercent > percent else { return nil }
         return min(100, max(0, projectedPercent))
     }
+
+    /// What a row passes to `LimitRow`: `line` when the "Show pace forecast" switch is on,
+    /// else nil, so the caption and the ghost tick both vanish together. One place for the
+    /// popover and the Antigravity tab to agree on, rather than each gating its own call site.
+    static func shown(_ line: PaceLine?, enabled: Bool) -> PaceLine? {
+        enabled ? line : nil
+    }
 }
 
 // MARK: - Notifications

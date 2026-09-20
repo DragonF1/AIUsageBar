@@ -253,6 +253,21 @@ final class PaceTrackerTests: XCTestCase {
         let over = PaceLine(.atReset(percent: 140), window: .fiveHour)
         XCTAssertEqual(over.tickPercent(aheadOf: 40), 100)
     }
+
+    func testShownPassesThroughWhenEnabled() {
+        let line = PaceLine(.atReset(percent: 61.6), window: .fiveHour)
+        XCTAssertEqual(PaceLine.shown(line, enabled: true), line)
+    }
+
+    func testShownIsNilWhenDisabledEvenWithALine() {
+        let line = PaceLine(.atReset(percent: 61.6), window: .fiveHour)
+        XCTAssertNil(PaceLine.shown(line, enabled: false))
+    }
+
+    func testShownIsNilWhenThereWasNoLineRegardlessOfTheSwitch() {
+        XCTAssertNil(PaceLine.shown(nil, enabled: true))
+        XCTAssertNil(PaceLine.shown(nil, enabled: false))
+    }
 }
 
 // MARK: - Monitor
@@ -492,6 +507,14 @@ final class PreferenceModelTests: XCTestCase {
         }
     }
 
+    func testShowPaceDefaultsOnAndRoundTrips() {
+        withScratchDefaults { _ in
+            XCTAssertTrue(Preferences.showPace, "a fresh suite has nothing stored")
+            Preferences.showPace = false
+            XCTAssertFalse(Preferences.showPace)
+        }
+    }
+
     func testMenuBarFormatDefaultsAndRoundTrips() {
         withScratchDefaults { _ in
             XCTAssertEqual(Preferences.menuBarFormat, Preferences.defaultMenuBarFormat, "a fresh suite has nothing stored")
@@ -507,6 +530,23 @@ final class PreferenceModelTests: XCTestCase {
         withScratchDefaults { suite in
             suite.set(Data([0x00, 0x01, 0xFF]), forKey: Preferences.Key.colorScale)
             XCTAssertEqual(Preferences.colorScale, .default)
+        }
+    }
+
+    func testMenuBarRulesDefaultEmptyAndRoundTrip() {
+        withScratchDefaults { _ in
+            XCTAssertEqual(Preferences.menuBarRules, [], "a fresh suite has nothing stored")
+            let rule = MenuBarRule(condition: MenuBarCondition(window: .session, comparison: .atLeast, threshold: .percent(80)),
+                                   format: "HOT {5h}")
+            Preferences.menuBarRules = [rule]
+            XCTAssertEqual(Preferences.menuBarRules, [rule])
+        }
+    }
+
+    func testMenuBarRulesFallBackOnCorruptData() {
+        withScratchDefaults { suite in
+            suite.set(Data([0x00, 0x01, 0xFF]), forKey: Preferences.Key.menuBarRules)
+            XCTAssertEqual(Preferences.menuBarRules, [])
         }
     }
 

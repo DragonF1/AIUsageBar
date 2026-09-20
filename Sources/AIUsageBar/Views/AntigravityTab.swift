@@ -8,6 +8,7 @@ struct AntigravityTab: View {
     var monitor: QuotaMonitor
     var now: Date
     @AppStorage(Preferences.Key.extraUsage) private var extraUsage = true
+    @AppStorage(Preferences.Key.showPace) private var showPace = true
 
     var body: some View {
         let groups = store.usage?.groups ?? []
@@ -23,7 +24,8 @@ struct AntigravityTab: View {
                         LimitRow(title: reading.name,
                                  percent: bucket.percentUsed,
                                  detail: bucket.detail(now: now),
-                                 pace: monitor.paceLine(for: reading.id, window: reading.window, now: now),
+                                 pace: PaceLine.shown(monitor.paceLine(for: reading.id, window: reading.window, now: now),
+                                                      enabled: showPace),
                                  dimmed: store.isStale)
                     }
                 }

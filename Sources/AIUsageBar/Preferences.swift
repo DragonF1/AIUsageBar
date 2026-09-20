@@ -13,6 +13,8 @@ enum Preferences {
         static let colorScale = "colorScale"
         static let showRemaining = "showRemaining"
         static let menuBarFormat = "menuBarFormat"
+        static let menuBarRules = "menuBarRules"
+        static let showPace = "showPace"
     }
 
     static var defaults: UserDefaults = .standard
@@ -65,6 +67,21 @@ enum Preferences {
     static var menuBarFormat: String {
         get { defaults.object(forKey: Key.menuBarFormat) as? String ?? defaultMenuBarFormat }
         set { defaults.set(newValue, forKey: Key.menuBarFormat) }
+    }
+
+    /// The ordered "when this window crosses this number or band, say this instead" rules the
+    /// menu bar checks before falling back to `menuBarFormat`. Missing or garbage data is an
+    /// empty list, the pre-feature behaviour, so nothing changes for an existing install.
+    static var menuBarRules: [MenuBarRule] {
+        get { MenuBarRule.decodeList(defaults.data(forKey: Key.menuBarRules)) }
+        set { defaults.set(MenuBarRule.encodeList(newValue), forKey: Key.menuBarRules) }
+    }
+
+    /// Whether a row draws its pace forecast line and the ghost tick on its bar. On by default;
+    /// switching it off does not affect the notifications the pace can still trigger.
+    static var showPace: Bool {
+        get { defaults.object(forKey: Key.showPace) as? Bool ?? true }
+        set { defaults.set(newValue, forKey: Key.showPace) }
     }
 }
 

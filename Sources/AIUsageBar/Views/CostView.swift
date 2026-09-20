@@ -35,7 +35,6 @@ struct CostView: View {
                     .padding(16)
                 }
             }
-            Divider()
             footer
         }
         .frame(minWidth: 460, idealWidth: 520, minHeight: 400, idealHeight: 520)
@@ -44,12 +43,7 @@ struct CostView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(tokens.product.name) Cost").font(.headline)
-                Text(summary).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
+        SurfaceHeader(title: "\(tokens.product.name) Cost", subtitle: summary) {
             Picker("Range", selection: $range) {
                 ForEach(CostRange.allCases) { Text($0.title).tag($0) }
             }
@@ -59,8 +53,7 @@ struct CostView: View {
             .help("How many calendar days the numbers, the chart and the splits cover, today included")
             Button("Refresh", action: onRefresh)
         }
-        .controlSize(.small)
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        .padding(.horizontal, Chrome.inset).padding(.vertical, 12)
     }
 
     private var summary: String {
@@ -186,7 +179,7 @@ struct CostView: View {
     @ViewBuilder private func models(_ report: CostReport) -> some View {
         if !report.models.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("BY MODEL").font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
+                SectionHeader("By model")
                 Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 4) {
                     ForEach(report.models) { share in
                         TokenRow(title: TokenText.modelName(share.model),
@@ -199,9 +192,6 @@ struct CostView: View {
     }
 
     private var footer: some View {
-        Text(tokens.error ?? tokens.product.footer)
-            .font(.caption2).foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16).padding(.vertical, 8)
+        SurfaceFooter(text: tokens.error ?? tokens.product.footer, isError: tokens.error != nil)
     }
 }

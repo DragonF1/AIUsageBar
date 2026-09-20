@@ -11,16 +11,15 @@ struct PopoverView: View {
     var onShowSessions: () -> Void
     var onShowCost: () -> Void
     var onShowAntigravityCost: () -> Void
-    var onShowAppearance: () -> Void
+    var onShowSettings: () -> Void
     var onQuit: () -> Void
 
     @AppStorage(UsageTab.key) private var tab: UsageTab = .claude
-    // The same switches the right-click menu shows, on the popover so nobody has to know about right-click.
-    @AppStorage(Preferences.Key.notifications) private var notifications = true
-    @AppStorage(Preferences.Key.startAtLogin) private var startAtLogin = true
-    @AppStorage(Preferences.Key.menuBarMetric) private var metric: MenuBarMetric = .auto
+    // Extra usage gates a whole row below, and pace gates a line and a tick on every row; both
+    // are read here for that, not for a control on the popover itself (the gear opens Settings
+    // for that now).
     @AppStorage(Preferences.Key.extraUsage) private var extraUsage = true
-    @AppStorage(Preferences.Key.showRemaining) private var showRemaining = false
+    @AppStorage(Preferences.Key.showPace) private var showPace = true
 
     @State private var now = Date()
     @State private var revealed = false
@@ -41,7 +40,7 @@ struct PopoverView: View {
             Divider()
             footer
         }
-        .padding(16)
+        .padding(Chrome.inset)
         .frame(width: 300)
         .fixedSize(horizontal: false, vertical: true)
         .clipped()
@@ -55,10 +54,9 @@ struct PopoverView: View {
         }
         .onDisappear { revealed = false }
         .onReceive(tick) { now = $0 }
-        .onChange(of: notifications) { _, on in
-            if on { monitor.notifier.requestAuthorization() }
-        }
-        .onChange(of: startAtLogin) { _, on in LoginItem.apply(on) }
+        // Outermost, so the background is not part of the reveal animation (opacity, scale,
+        // offset above) and the popover's body matches the windows' opaque chrome.
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
     @ViewBuilder private var content: some View {
@@ -93,19 +91,15 @@ struct PopoverView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(tab == .claude ? "Claude Usage" : "Antigravity Usage").font(.headline)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
+        SurfaceHeader(title: tab == .claude ? "Claude Usage" : "Antigravity Usage", subtitle: subtitle) {
             if let plan = badge {
                 Text(plan)
                     .font(.caption2.weight(.semibold))
                     .padding(.horizontal, 6).padding(.vertical, 2)
                     .background(Capsule().fill(Color.accentColor.opacity(0.15)))
             }
-            settingsMenu
+            usagePageButton
+            settingsButton
         }
     }
 
@@ -139,7 +133,8 @@ struct PopoverView: View {
                     LimitRow(title: limit.title,
                              percent: limit.percent,
                              detail: ResetText.describe(limit.resetsAt, window: limit.kind == "session" ? .fiveHour : .other, now: now),
-                             pace: reading.flatMap { monitor.paceLine(for: $0.id, window: $0.window, now: now) },
+                             pace: PaceLine.shown(reading.flatMap { monitor.paceLine(for: $0.id, window: $0.window, now: now) },
+                                                  enabled: showPace),
                              dimmed: store.isStale)
                 }
                 // Always drawn while the switch is on: an account without extra usage gets an
@@ -248,29 +243,28 @@ struct PopoverView: View {
         .controlSize(.small)
     }
 
-    private var settingsMenu: some View {
-        Menu {
-            Toggle("Notifications", isOn: $notifications)
-            Toggle("Start at login", isOn: $startAtLogin)
-            Toggle("Extra usage credits", isOn: $extraUsage)
-            Toggle("Show remaining instead of used", isOn: $showRemaining)
-            Picker("Menu bar tint", selection: $metric) {
-                ForEach(MenuBarMetric.allCases, id: \.self) { Text($0.title).tag($0) }
-            }
-            Divider()
-            Button(UsagePage.title(for: tab)) { UsagePage.open(for: tab) }
-            Divider()
-            Button("Appearance…") { onShowAppearance() }
-        } label: {
+    /// The tab's web page ("Usage on claude.ai", "Plan on Google One"), the same link the
+    /// right-click menu ends with; it sat in the gear's dropdown before that became a window.
+    private var usagePageButton: some View {
+        Button { UsagePage.open(for: tab) } label: {
+            Image(systemName: "arrow.up.right.square")
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(UsagePage.title(for: tab))
+    }
+
+    /// Opens the Settings window. The gear used to hold a dropdown of switches; those now live
+    /// in Settings, so the popover carries only the door to it.
+    private var settingsButton: some View {
+        Button(action: onShowSettings) {
             Image(systemName: "gearshape")
                 .font(.body)
                 .foregroundStyle(.secondary)
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Notifications warn at \(StatusItemController.thresholdText(monitor.thresholds)), when a window is used up, "
-              + "runs out at the current pace, or resets after a warning.")
+        .help("Open Settings: notifications, start at login, extra usage credits, "
+              + "show remaining, pace forecast, menu bar tint, menu bar text and colours.")
     }
 }

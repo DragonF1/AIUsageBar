@@ -146,7 +146,10 @@ final class UsageStore {
 /// cutoffs and colours are user-customisable (see `ColorScale`); callers that do not pass one
 /// get `.default`, which reproduces the original fixed 75/85/95 scale.
 enum UsageColor {
-    enum Level: CaseIterable {
+    /// Raw-valued so a menu bar rule's threshold (`Sources/AIUsageBar/MenuBarRule.swift`) can
+    /// store a band across a decode/encode round trip; `Comparable` orders low < medium < high
+    /// < critical, so "at or over High" reads as a straightforward comparison.
+    enum Level: String, CaseIterable, Codable, Comparable {
         case low, medium, high, critical
 
         /// The label a settings row shows next to this band.
@@ -158,6 +161,18 @@ enum UsageColor {
             case .critical: return "Critical"
             }
         }
+
+        /// Explicit so a new case cannot compile without a place in the order.
+        private var rank: Int {
+            switch self {
+            case .low: return 0
+            case .medium: return 1
+            case .high: return 2
+            case .critical: return 3
+            }
+        }
+
+        static func < (lhs: Level, rhs: Level) -> Bool { lhs.rank < rhs.rank }
     }
 
     static func level(for percent: Double, scale: ColorScale = .default) -> Level {

@@ -1,10 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// The colour scale editor, one section of the "Appearance…" window: edits the four band
+/// The colour scale editor, the "Colours" tab of the Settings window: edits the four band
 /// colours and the three cutoffs between them, applying live (through `Preferences.colorScale`)
-/// to the popover's bars and the menu bar icon. Unpadded and unsized: `AppearanceSettingsView`
-/// supplies the window's outer padding and width.
+/// to the popover's bars and the menu bar icon. Unpadded and unsized: `SettingsView` supplies
+/// the window's outer padding and width.
 struct ColorScaleSettingsView: View {
     @State private var scale: ColorScale = Preferences.colorScale
     /// The pending write; a colour panel drag commits many times a second, and every write
@@ -32,6 +32,7 @@ struct ColorScaleSettingsView: View {
                     .disabled(scale == .default)
             }
         }
+        .onDisappear(perform: flush)
     }
 
     private func row(for level: UsageColor.Level) -> some View {
@@ -145,6 +146,16 @@ struct ColorScaleSettingsView: View {
             try? await Task.sleep(for: .milliseconds(150))
             guard !Task.isCancelled else { return }
             Preferences.colorScale = normalized
+            pendingSave = nil
         }
+    }
+
+    /// Switching panes tears this view down; an edit still inside its wait is written now
+    /// rather than lost with the task.
+    private func flush() {
+        guard let pending = pendingSave else { return }
+        pending.cancel()
+        pendingSave = nil
+        Preferences.colorScale = scale
     }
 }

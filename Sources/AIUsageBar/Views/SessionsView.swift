@@ -47,7 +47,6 @@ struct SessionsView: View {
                     }
                 }
             }
-            Divider()
             footer
         }
         .frame(minWidth: 600, idealWidth: 660, minHeight: 240, idealHeight: 380)
@@ -80,15 +79,10 @@ struct SessionsView: View {
     }
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Claude Code Sessions").font(.headline)
-                Text(summary).font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button("Refresh", action: onRefresh).controlSize(.small)
+        SurfaceHeader(title: "Claude Code Sessions", subtitle: summary) {
+            Button("Refresh", action: onRefresh)
         }
-        .padding(.horizontal, 16).padding(.vertical, 12)
+        .padding(.horizontal, Chrome.inset).padding(.vertical, 12)
     }
 
     private var summary: String {
@@ -101,20 +95,17 @@ struct SessionsView: View {
     }
 
     private func sectionHeader(_ title: String, count: Int) -> some View {
-        HStack {
-            Text(title.uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(.secondary)
-            Text("\(count)").font(.caption2.monospacedDigit()).foregroundStyle(.tertiary)
-            Spacer()
-        }
-        .padding(.horizontal, 16).padding(.vertical, 6)
-        .background(.bar)
+        SectionHeader(title, count: count)
+            .padding(.horizontal, Chrome.inset).padding(.vertical, 6)
+            // Pinned in the LazyVStack, so it must stay opaque while rows scroll under it;
+            // `.bar` lets those rows show through.
+            .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private var footer: some View {
-        Text(notice ?? tokens.error ?? "Tokens and cost are each session's total over the retained \(CostRange.retentionDays) days at list prices. Resume reopens a closed session in a new Terminal window.")
-            .font(.caption2).foregroundStyle(notice == nil ? AnyShapeStyle(.secondary) : AnyShapeStyle(.red))
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 16).padding(.vertical, 8)
+        SurfaceFooter(text: notice ?? tokens.error
+            ?? "Tokens and cost are each session's total over the retained \(CostRange.retentionDays) days at list prices. Resume reopens a closed session in a new Terminal window.",
+                      isError: notice != nil)
     }
 }
 

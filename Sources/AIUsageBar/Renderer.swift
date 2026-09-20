@@ -102,6 +102,9 @@ enum ScreenshotRenderer {
             Preferences.Key.menuBarMetric: MenuBarMetric.auto.rawValue,
             Preferences.Key.colorScale: ColorScale.defaultData,
             Preferences.Key.showRemaining: false,
+            Preferences.Key.menuBarFormat: Preferences.defaultMenuBarFormat,
+            Preferences.Key.menuBarRules: MenuBarRule.encodeList([]),
+            Preferences.Key.showPace: true,
             "AppleAccentColor": 4,
             "AppleHighlightColor": "0.698039 0.843137 1.000000 Blue",
         ], forName: UserDefaults.argumentDomain)
@@ -197,7 +200,7 @@ enum ScreenshotRenderer {
         let view = PopoverView(store: s.usage, antigravity: s.antigravity, status: s.status,
                                antigravityStatus: s.antigravityStatus, tokens: s.tokens,
                                antigravityTokens: s.antigravityTokens, monitor: s.monitor,
-                               onShowSessions: {}, onShowCost: {}, onShowAntigravityCost: {}, onShowAppearance: {}, onQuit: {})
+                               onShowSessions: {}, onShowCost: {}, onShowAntigravityCost: {}, onShowSettings: {}, onQuit: {})
         let hosting = NSHostingController(rootView: view)
         hosting.sizingOptions = [.preferredContentSize]
         // Key, like the real popover: an inactive window draws the progress bars grey.
@@ -230,14 +233,11 @@ enum ScreenshotRenderer {
         override var canBecomeKey: Bool { true }
     }
 
-    /// A titled window like `TokenWindowController` makes, without the frame autosave.
+    /// The window `TokenWindowController` makes (same chrome via `PanelWindow.make`), without
+    /// the frame autosave, so the screenshot shows the title bar the app really draws.
     static func window(_ view: AnyView, title: String, size: NSSize, appearance: NSAppearance) async throws -> NSBitmapImageRep {
         let hosting = NSHostingController(rootView: view)
-        let window = NSWindow(contentViewController: hosting)
-        window.title = title
-        window.styleMask = [.titled, .closable, .resizable]
-        window.isReleasedWhenClosed = false
-        window.level = .floating
+        let window = PanelWindow.make(title: title, hosting: hosting, resizable: true)
         window.setContentSize(size)
         window.center()
         NSApp.activate(ignoringOtherApps: true)

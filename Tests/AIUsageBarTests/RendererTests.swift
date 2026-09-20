@@ -124,6 +124,17 @@ final class RendererTests: XCTestCase {
         XCTAssertEqual(title.text, "34% used, resets 2h 10m, $3.50 today")
     }
 
+    @MainActor func testMenuBarTitleUsesTheRuleChosenFormat() {
+        let now = Date(timeIntervalSince1970: 1_789_120_800)
+        let values = MenuBarValues(sessionPercent: 82, weeklyPercent: 40, sessionResetsAt: nil, weeklyResetsAt: nil,
+                                   todayCost: nil, now: now, showRemaining: false)
+        let rule = MenuBarRule(condition: MenuBarCondition(window: .session, comparison: .atLeast, threshold: .percent(80)),
+                               format: "HOT {5h}")
+        let format = MenuBarRules.format(for: values, rules: [rule], fallback: Preferences.defaultMenuBarFormat, scale: .default)
+        let title = MenuBarTitle(tab: .claude, isStale: false, metric: .auto, scale: .default, format: format, values: values)
+        XCTAssertEqual(title.text, "HOT 82%")
+    }
+
     @MainActor func testMenuBarTitleGoesStaleWithoutNumbers() {
         let missing = MenuBarTitle(tab: .antigravity, session: nil, weekly: nil, isStale: false, metric: .auto)
         XCTAssertEqual(missing.text, " – / –")

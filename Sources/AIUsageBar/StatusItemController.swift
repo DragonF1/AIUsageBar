@@ -15,7 +15,7 @@ final class StatusItemController: NSObject {
     private let sessionsWindow: TokenWindowController
     private let costWindow: TokenWindowController
     private let antigravityCostWindow: TokenWindowController
-    private let appearanceWindow: SettingsWindowController
+    private let settingsWindow: SettingsWindowController
     private var observation: Task<Void, Never>?
     private var outsideClickMonitor: Any?
 
@@ -33,7 +33,7 @@ final class StatusItemController: NSObject {
         sessionsWindow = .sessions(tokens: tokens)
         costWindow = .cost(ledger: tokens, autosaveName: "CostWindow")
         antigravityCostWindow = .cost(ledger: antigravityTokens, autosaveName: "AntigravityCostWindow")
-        appearanceWindow = .appearance(usage: store, antigravity: antigravity, tokens: tokens, antigravityTokens: antigravityTokens)
+        settingsWindow = .settings(monitor: monitor)
         super.init()
 
         popover.behavior = .transient
@@ -44,7 +44,7 @@ final class StatusItemController: NSObject {
                                                                 onShowSessions: { [weak self] in self?.showSessions() },
                                                                 onShowCost: { [weak self] in self?.costWindow.show() },
                                                                 onShowAntigravityCost: { [weak self] in self?.antigravityCostWindow.show() },
-                                                                onShowAppearance: { [weak self] in self?.showAppearance() },
+                                                                onShowSettings: { [weak self] in self?.showSettings() },
                                                                 onQuit: { NSApp.terminate(nil) }))
         // Content grows when the status banner or rows arrive after the popover is open;
         // publishing the fitting size lets NSPopover resize instead of clipping the top.
@@ -88,12 +88,16 @@ final class StatusItemController: NSObject {
         // Antigravity tab: "8% / 52%" = Gemini 5-hour / Gemini weekly. Claude and GPT limits
         // live in the popover only.
         let tab = UsageTab.current
+        let scale = Preferences.colorScale
         let values = MenuBarValues.current(tab: tab, usage: store, antigravity: antigravity, tokens: tokens,
                                            antigravityTokens: antigravityTokens, now: Date(),
                                            showRemaining: Preferences.showRemaining)
+        // The rules list wins first, in list order; the plain template field is what it always was.
+        let format = MenuBarRules.format(for: values, rules: Preferences.menuBarRules,
+                                         fallback: Preferences.menuBarFormat, scale: scale)
         let title = MenuBarTitle(tab: tab, isStale: tab == .claude ? store.isStale : antigravity.isStale,
-                                 metric: Preferences.menuBarMetric, scale: Preferences.colorScale,
-                                 format: Preferences.menuBarFormat, values: values)
+                                 metric: Preferences.menuBarMetric, scale: scale,
+                                 format: format, values: values)
         button.attributedTitle = title.attributedText
         button.image = title.image
         button.imagePosition = .imageLeading
@@ -145,9 +149,9 @@ final class StatusItemController: NSObject {
         sessionsWindow.show()
     }
 
-    private func showAppearance() {
+    private func showSettings() {
         closePopover()
-        appearanceWindow.show()
+        settingsWindow.show()
     }
 
     private func closePopover() {
@@ -196,7 +200,7 @@ final class StatusItemController: NSObject {
         tint.submenu = choices
         menu.addItem(tint)
 
-        menu.addItem(withTitle: "Appearance…", action: #selector(showAppearanceMenuItem), keyEquivalent: "").target = self
+        menu.addItem(withTitle: "Settings…", action: #selector(showSettingsMenuItem), keyEquivalent: "").target = self
 
         menu.addItem(.separator())
         menu.addItem(withTitle: UsagePage.title(for: UsageTab.current), action: #selector(openUsagePage), keyEquivalent: "").target = self
@@ -253,7 +257,7 @@ final class StatusItemController: NSObject {
 
     @objc private func openUsagePage() { UsagePage.open(for: UsageTab.current) }
 
-    @objc private func showAppearanceMenuItem() { showAppearance() }
+    @objc private func showSettingsMenuItem() { showSettings() }
 
     @objc private func quit() { NSApp.terminate(nil) }
 }
