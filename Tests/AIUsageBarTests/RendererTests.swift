@@ -109,6 +109,21 @@ final class RendererTests: XCTestCase {
         XCTAssertEqual(title.attributedText.string, " 34% / 58%")
     }
 
+    @MainActor func testMenuBarTitleShowsRemainingWhenAsked() {
+        let title = MenuBarTitle(tab: .claude, session: 34.4, weekly: 57.6, isStale: false, metric: .auto, showRemaining: true)
+        XCTAssertEqual(title.text, " 66% / 42%")
+    }
+
+    @MainActor func testMenuBarTitleUsesACustomFormat() {
+        let now = Date(timeIntervalSince1970: 1_789_120_800)
+        let values = MenuBarValues(sessionPercent: 34.4, weeklyPercent: 57.6,
+                                   sessionResetsAt: now.addingTimeInterval(130 * 60), weeklyResetsAt: nil,
+                                   todayCost: 3.5, now: now, showRemaining: false)
+        let title = MenuBarTitle(tab: .claude, isStale: false, metric: .auto, scale: .default,
+                                 format: "{5h} used, resets {reset5h}, {cost} today", values: values)
+        XCTAssertEqual(title.text, "34% used, resets 2h 10m, $3.50 today")
+    }
+
     @MainActor func testMenuBarTitleGoesStaleWithoutNumbers() {
         let missing = MenuBarTitle(tab: .antigravity, session: nil, weekly: nil, isStale: false, metric: .auto)
         XCTAssertEqual(missing.text, " – / –")

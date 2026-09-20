@@ -222,6 +222,37 @@ final class PaceTrackerTests: XCTestCase {
         XCTAssertFalse(under.urgent)
         XCTAssertEqual(under.text, "At this pace: ~62% at reset")
     }
+
+    func testProjectedPercentIsAHundredWhenRunningOut() {
+        let line = PaceLine(.runsOut(at: t0), window: .fiveHour)
+        XCTAssertEqual(line.projectedPercent, 100)
+    }
+
+    func testProjectedPercentIsTheForecastAtReset() {
+        let line = PaceLine(.atReset(percent: 61.6), window: .fiveHour)
+        XCTAssertEqual(line.projectedPercent, 61.6)
+    }
+
+    func testTickPercentIsNilWhenNotAheadOfTheCurrentFill() {
+        let line = PaceLine(.atReset(percent: 61.6), window: .fiveHour)
+        XCTAssertNil(line.tickPercent(aheadOf: 61.6), "equal to the current fill: nothing to preview")
+        XCTAssertNil(line.tickPercent(aheadOf: 70), "behind the current fill: nothing to preview")
+    }
+
+    func testTickPercentPassesThroughWhenAhead() {
+        let line = PaceLine(.atReset(percent: 61.6), window: .fiveHour)
+        XCTAssertEqual(line.tickPercent(aheadOf: 40), 61.6)
+    }
+
+    func testTickPercentIsAHundredWhenRunningOut() {
+        let line = PaceLine(.runsOut(at: t0), window: .fiveHour)
+        XCTAssertEqual(line.tickPercent(aheadOf: 40), 100)
+    }
+
+    func testTickPercentClampsToTheBar() {
+        let over = PaceLine(.atReset(percent: 140), window: .fiveHour)
+        XCTAssertEqual(over.tickPercent(aheadOf: 40), 100)
+    }
 }
 
 // MARK: - Monitor
@@ -450,6 +481,25 @@ final class PreferenceModelTests: XCTestCase {
             custom.low = .custom(RGBA(red: 0.1, green: 0.2, blue: 0.3))
             Preferences.colorScale = custom
             XCTAssertEqual(Preferences.colorScale, custom.normalized())
+        }
+    }
+
+    func testShowRemainingDefaultsFalseAndRoundTrips() {
+        withScratchDefaults { _ in
+            XCTAssertFalse(Preferences.showRemaining, "a fresh suite has nothing stored")
+            Preferences.showRemaining = true
+            XCTAssertTrue(Preferences.showRemaining)
+        }
+    }
+
+    func testMenuBarFormatDefaultsAndRoundTrips() {
+        withScratchDefaults { _ in
+            XCTAssertEqual(Preferences.menuBarFormat, Preferences.defaultMenuBarFormat, "a fresh suite has nothing stored")
+            Preferences.menuBarFormat = "{5h}"
+            XCTAssertEqual(Preferences.menuBarFormat, "{5h}")
+            // An empty string is a real, deliberate value (the icon alone), not a missing key.
+            Preferences.menuBarFormat = ""
+            XCTAssertEqual(Preferences.menuBarFormat, "")
         }
     }
 

@@ -16,11 +16,15 @@ final class SettingsWindowController {
         self.makeView = makeView
     }
 
-    /// The editor behind "Usage colours…", both the right-click menu's entry and the
-    /// popover's gear menu.
-    static func colors() -> SettingsWindowController {
-        SettingsWindowController(title: "Usage colours", autosaveName: "ColorScaleSettings") {
-            AnyView(ColorScaleSettingsView())
+    /// The editor behind "Appearance…", both the right-click menu's entry and the popover's
+    /// gear menu: the menu bar text template above the colour scale editor. The autosave name
+    /// stays "ColorScaleSettings" (its original name) so a saved frame survives the rename.
+    static func appearance(usage: UsageStore, antigravity: AntigravityStore,
+                            tokens: TokenStore, antigravityTokens: AntigravityTokenStore) -> SettingsWindowController
+    {
+        SettingsWindowController(title: "Appearance", autosaveName: "ColorScaleSettings") {
+            AnyView(AppearanceSettingsView(usage: usage, antigravity: antigravity,
+                                            tokens: tokens, antigravityTokens: antigravityTokens))
         }
     }
 

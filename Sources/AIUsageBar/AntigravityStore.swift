@@ -144,6 +144,8 @@ final class AntigravityStore {
     /// The menu bar tracks the Gemini group only, as "5h% / weekly%" like the Claude tab.
     var geminiSessionPercent: Double? { usage?.gemini?.buckets.first { $0.window == "5h" }?.percentUsed }
     var geminiWeeklyPercent: Double? { usage?.gemini?.buckets.first { $0.window == "weekly" }?.percentUsed }
+    var geminiSessionResetsAt: Date? { usage?.gemini?.buckets.first { $0.window == "5h" }?.resetsAt }
+    var geminiWeeklyResetsAt: Date? { usage?.gemini?.buckets.first { $0.window == "weekly" }?.resetsAt }
 
     var isStale: Bool {
         if case .ok = state { return false }

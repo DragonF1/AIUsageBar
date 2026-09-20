@@ -1,9 +1,10 @@
 import AppKit
 import SwiftUI
 
-/// The window behind "Usage colours…": edits the four band colours and the three cutoffs
-/// between them, applying live (through `Preferences.colorScale`) to the popover's bars and
-/// the menu bar icon.
+/// The colour scale editor, one section of the "Appearance…" window: edits the four band
+/// colours and the three cutoffs between them, applying live (through `Preferences.colorScale`)
+/// to the popover's bars and the menu bar icon. Unpadded and unsized: `AppearanceSettingsView`
+/// supplies the window's outer padding and width.
 struct ColorScaleSettingsView: View {
     @State private var scale: ColorScale = Preferences.colorScale
     /// The pending write; a colour panel drag commits many times a second, and every write
@@ -31,8 +32,6 @@ struct ColorScaleSettingsView: View {
                     .disabled(scale == .default)
             }
         }
-        .padding(20)
-        .frame(width: 380)
     }
 
     private func row(for level: UsageColor.Level) -> some View {

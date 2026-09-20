@@ -120,6 +120,7 @@ struct UsageResponse: Codable, Equatable {
 
     var sessionPercent: Double? { displayLimits.first { $0.kind == "session" }?.percent }
     var weeklyPercent: Double? { displayLimits.first { $0.kind == "weekly_all" }?.percent }
+    var sessionResetsAt: Date? { displayLimits.first { $0.kind == "session" }?.resetsAt }
     var weeklyResetsAt: Date? { displayLimits.first { $0.kind == "weekly_all" }?.resetsAt }
     var highestPercent: Double? { displayLimits.compactMap(\.percent).max() }
 }

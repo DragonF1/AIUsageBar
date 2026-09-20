@@ -197,6 +197,30 @@ enum UsageColor {
     }
 }
 
+/// Percent text shared by the menu bar and the rows: plain for the icon's title, a labelled
+/// form for a row's number. Both read "used" by default and flip to "remaining" for the
+/// battery-style "Show remaining instead of used" switch.
+enum PercentText {
+    /// "34%", or "–" when there is nothing to show.
+    static func bare(_ v: Double?, remaining: Bool) -> String {
+        guard let v else { return "–" }
+        return "\(whole(v, remaining: remaining))%"
+    }
+
+    /// "34%" used, "66% left" remaining, "–" when there is nothing to show.
+    static func labelled(_ v: Double?, remaining: Bool) -> String {
+        guard let v else { return "–" }
+        let value = whole(v, remaining: remaining)
+        return remaining ? "\(value)% left" : "\(value)%"
+    }
+
+    /// Used reads as reported, past 100 included (extra usage can run over its limit);
+    /// remaining floors at 0 so the same account says "0% left", never "-5% left".
+    private static func whole(_ v: Double, remaining: Bool) -> Int {
+        Int((remaining ? max(0, 100 - v) : v).rounded())
+    }
+}
+
 enum ResetText {
     enum Window { case fiveHour, other }
 
@@ -228,10 +252,14 @@ enum ResetText {
         }
     }
 
-    /// "2h 10m", "45m", "1h". Minutes round up so a future reset never reads 0m.
+    /// "3d 4h", "5d", "2h 10m", "45m", "1h". Minutes round up so a future reset never reads 0m.
     static func remaining(_ interval: TimeInterval) -> String {
         let minutes = max(1, Int((interval / 60).rounded(.up)))
         let h = minutes / 60, m = minutes % 60
+        if h >= 24 {
+            let d = h / 24, hh = h % 24
+            return hh == 0 ? "\(d)d" : "\(d)d \(hh)h"
+        }
         switch (h, m) {
         case (0, _): return "\(m)m"
         case (_, 0): return "\(h)h"

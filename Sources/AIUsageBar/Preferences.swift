@@ -11,9 +11,14 @@ enum Preferences {
         static let costRange = "costRange"
         static let extraUsage = "extraUsage"
         static let colorScale = "colorScale"
+        static let showRemaining = "showRemaining"
+        static let menuBarFormat = "menuBarFormat"
     }
 
     static var defaults: UserDefaults = .standard
+
+    /// The menu bar's original layout: the 5-hour and weekly percentages either side of a slash.
+    static let defaultMenuBarFormat = " {5h} / {week}"
 
     /// Register the app as a login item (on by default, as it always was).
     static var startAtLogin: Bool {
@@ -45,6 +50,21 @@ enum Preferences {
     static var colorScale: ColorScale {
         get { ColorScale.decode(defaults.data(forKey: Key.colorScale)) }
         set { defaults.set(newValue.normalized().encoded(), forKey: Key.colorScale) }
+    }
+
+    /// Battery style: rows and the menu bar show what is left instead of what was used, and a
+    /// row's bar fill flips to match. Off by default, matching the app's original behaviour.
+    static var showRemaining: Bool {
+        get { defaults.object(forKey: Key.showRemaining) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: Key.showRemaining) }
+    }
+
+    /// The menu bar's text, built from `MenuBarTemplate`'s tokens. An empty string is a real,
+    /// deliberate value (the icon alone), so a missing key is the only thing that falls back
+    /// to the default, not an empty one.
+    static var menuBarFormat: String {
+        get { defaults.object(forKey: Key.menuBarFormat) as? String ?? defaultMenuBarFormat }
+        set { defaults.set(newValue, forKey: Key.menuBarFormat) }
     }
 }
 

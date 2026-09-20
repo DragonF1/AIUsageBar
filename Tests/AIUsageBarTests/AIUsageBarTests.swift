@@ -53,6 +53,13 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(u.displayLimits.map(\.percent), [10, 20])
     }
 
+    func testSessionResetsAtMirrorsWeekly() throws {
+        let u = try UsageClient.decoder.decode(UsageResponse.self, from: sampleUsage)
+        XCTAssertNotNil(u.sessionResetsAt)
+        XCTAssertEqual(u.sessionResetsAt, u.displayLimits.first { $0.kind == "session" }?.resetsAt)
+        XCTAssertEqual(u.weeklyResetsAt, u.displayLimits.first { $0.kind == "weekly_all" }?.resetsAt)
+    }
+
     func testExpiry() {
         let now = Date()
         let soon = OAuthCredential(json: ["accessToken": "x", "expiresAt": (now.timeIntervalSince1970 + 30) * 1000])!
@@ -77,10 +84,27 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(ResetText.remaining(45 * 60), "45m")
         XCTAssertEqual(ResetText.remaining(60 * 60), "1h")
         XCTAssertEqual(ResetText.remaining(30), "1m")
+        XCTAssertEqual(ResetText.remaining(3 * 86400 + 4 * 3600), "3d 4h")
+        XCTAssertEqual(ResetText.remaining(5 * 86400), "5d")
         XCTAssertEqual(ResetText.ordinal(2), "2nd")
         XCTAssertEqual(ResetText.ordinal(3), "3rd")
         XCTAssertEqual(ResetText.ordinal(11), "11th")
         XCTAssertEqual(ResetText.ordinal(22), "22nd")
+    }
+
+    func testPercentText() {
+        XCTAssertEqual(PercentText.bare(34, remaining: false), "34%")
+        XCTAssertEqual(PercentText.bare(34, remaining: true), "66%")
+        XCTAssertEqual(PercentText.bare(nil, remaining: false), "–")
+        XCTAssertEqual(PercentText.bare(nil, remaining: true), "–")
+        XCTAssertEqual(PercentText.labelled(34, remaining: false), "34%")
+        XCTAssertEqual(PercentText.labelled(34, remaining: true), "66% left")
+        XCTAssertEqual(PercentText.labelled(nil, remaining: false), "–")
+        XCTAssertEqual(PercentText.labelled(nil, remaining: true), "–")
+        // Over the limit: used keeps the real figure, remaining floors at zero.
+        XCTAssertEqual(PercentText.bare(105, remaining: false), "105%")
+        XCTAssertEqual(PercentText.bare(105, remaining: true), "0%")
+        XCTAssertEqual(PercentText.labelled(105, remaining: true), "0% left")
     }
 
     func testColorThresholds() {
@@ -1096,6 +1120,21 @@ final class AntigravityStoreTests: XCTestCase {
         let reloaded = AntigravityStore(cacheURL: cache)
         XCTAssertEqual(reloaded.usage?.host, AntigravityClient.productionHost)
         XCTAssertEqual(reloaded.state, .stale("Cached"))
+    }
+
+    @MainActor
+    func testGeminiResetAccessorsMirrorThePercentOnes() throws {
+        let summary = try UsageClient.decoder.decode(AntigravityQuotaSummary.self, from: antigravityFixture)
+        let usage = AntigravityUsage(summary: summary, tier: "Google AI Pro", host: AntigravityClient.dailyHost, aiCredits: nil)
+        let store = AntigravityStore(cacheURL: nil)
+        store.adopt(usage)
+
+        XCTAssertNotNil(store.geminiSessionPercent)
+        XCTAssertNotNil(store.geminiWeeklyPercent)
+        XCTAssertEqual(store.geminiSessionResetsAt, usage.gemini?.buckets.first { $0.window == "5h" }?.resetsAt)
+        XCTAssertEqual(store.geminiWeeklyResetsAt, usage.gemini?.buckets.first { $0.window == "weekly" }?.resetsAt)
+        XCTAssertNotNil(store.geminiSessionResetsAt)
+        XCTAssertNotNil(store.geminiWeeklyResetsAt)
     }
 }
 

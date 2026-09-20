@@ -163,16 +163,28 @@ struct PaceTracker: Codable, Equatable {
 struct PaceLine: Equatable {
     var text: String
     var urgent: Bool
+    /// Where the pace lands: 100 for a window that runs out before it resets, the forecast
+    /// percent otherwise. Feeds the row's ghost tick, a preview of where the bar is headed.
+    var projectedPercent: Double
 
     init(_ forecast: PaceForecast, window: QuotaReading.Window) {
         switch forecast {
         case .runsOut(let at):
             text = "At this pace: out at \(ResetText.clock(at, window: window == .fiveHour ? .fiveHour : .other))"
             urgent = true
+            projectedPercent = 100
         case .atReset(let percent):
             text = "At this pace: ~\(Int(percent.rounded()))% at reset"
             urgent = false
+            projectedPercent = percent
         }
+    }
+
+    /// Where to draw the ghost tick against the bar's current fill: nil when the pace has not
+    /// moved past `percent` (nothing to preview), else the projected percent clamped to the bar.
+    func tickPercent(aheadOf percent: Double) -> Double? {
+        guard projectedPercent > percent else { return nil }
+        return min(100, max(0, projectedPercent))
     }
 }
 

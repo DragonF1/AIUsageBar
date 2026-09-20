@@ -11,7 +11,7 @@ struct PopoverView: View {
     var onShowSessions: () -> Void
     var onShowCost: () -> Void
     var onShowAntigravityCost: () -> Void
-    var onShowColors: () -> Void
+    var onShowAppearance: () -> Void
     var onQuit: () -> Void
 
     @AppStorage(UsageTab.key) private var tab: UsageTab = .claude
@@ -20,6 +20,7 @@ struct PopoverView: View {
     @AppStorage(Preferences.Key.startAtLogin) private var startAtLogin = true
     @AppStorage(Preferences.Key.menuBarMetric) private var metric: MenuBarMetric = .auto
     @AppStorage(Preferences.Key.extraUsage) private var extraUsage = true
+    @AppStorage(Preferences.Key.showRemaining) private var showRemaining = false
 
     @State private var now = Date()
     @State private var revealed = false
@@ -252,13 +253,14 @@ struct PopoverView: View {
             Toggle("Notifications", isOn: $notifications)
             Toggle("Start at login", isOn: $startAtLogin)
             Toggle("Extra usage credits", isOn: $extraUsage)
+            Toggle("Show remaining instead of used", isOn: $showRemaining)
             Picker("Menu bar tint", selection: $metric) {
                 ForEach(MenuBarMetric.allCases, id: \.self) { Text($0.title).tag($0) }
             }
             Divider()
             Button(UsagePage.title(for: tab)) { UsagePage.open(for: tab) }
             Divider()
-            Button("Usage colours…") { onShowColors() }
+            Button("Appearance…") { onShowAppearance() }
         } label: {
             Image(systemName: "gearshape")
                 .font(.body)
