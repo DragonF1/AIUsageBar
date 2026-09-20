@@ -97,26 +97,26 @@ final class ModelTests: XCTestCase {
     func testRowIconMatchesTheLevels() {
         XCTAssertEqual(UsageColor.rowIcon(50), .green)
         XCTAssertEqual(UsageColor.rowIcon(75), .yellow)
-        XCTAssertEqual(UsageColor.rowIcon(85), .lightRed)
+        XCTAssertEqual(UsageColor.rowIcon(85), .red)
         XCTAssertEqual(UsageColor.rowIcon(95), .darkRed)
     }
 
     func testIconFollowsSessionBelowWeeklyCutoff() {
         XCTAssertEqual(UsageColor.icon(session: 10, weekly: 84.9), .green)
         XCTAssertEqual(UsageColor.icon(session: 75, weekly: 0), .yellow)
-        XCTAssertEqual(UsageColor.icon(session: 85, weekly: 0), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 85, weekly: 0), .red)
         XCTAssertEqual(UsageColor.icon(session: 95, weekly: 0), .darkRed)
         XCTAssertNil(UsageColor.icon(session: nil, weekly: 50))
         XCTAssertNil(UsageColor.icon(session: nil, weekly: nil))
     }
 
     func testIconFollowsWeeklyFrom85() {
-        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 85), .lightRed)
-        XCTAssertEqual(UsageColor.icon(session: 99, weekly: 85), .lightRed)
-        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 94.9), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 85), .red)
+        XCTAssertEqual(UsageColor.icon(session: 99, weekly: 85), .red)
+        XCTAssertEqual(UsageColor.icon(session: 0, weekly: 94.9), .red)
         XCTAssertEqual(UsageColor.icon(session: 0, weekly: 95), .darkRed)
         XCTAssertEqual(UsageColor.icon(session: 0, weekly: 100), .darkRed)
-        XCTAssertEqual(UsageColor.icon(session: nil, weekly: 90), .lightRed)
+        XCTAssertEqual(UsageColor.icon(session: nil, weekly: 90), .red)
     }
 }
 
@@ -788,6 +788,18 @@ final class AntigravityClientTests: XCTestCase {
         XCTAssertEqual(http.requests[0].url, accountURL)
     }
 
+    func testAccountReadsGoogleOneAICreditsOffThePaidTier() async throws {
+        let body = Data(#"{"currentTier":{"name":"Antigravity"},"paidTier":{"name":"Google AI Pro","availableCredits":[{"creditType":"GOOGLE_ONE_AI","minimumCreditAmountForUsage":"50"}]}}"#.utf8)
+        let http = FakeHTTP([HTTPResponse(status: 200, headers: [:], body: body)])
+        let account = try await AntigravityClient(http: http).fetchAccount(accessToken: "tok")
+        XCTAssertTrue(account.aiCredits)
+
+        let other = Data(#"{"paidTier":{"name":"Google AI Pro","availableCredits":[{"creditType":"SOMETHING_ELSE"}]}}"#.utf8)
+        let http2 = FakeHTTP([HTTPResponse(status: 200, headers: [:], body: other)])
+        let otherAccount = try await AntigravityClient(http: http2).fetchAccount(accessToken: "tok")
+        XCTAssertFalse(otherAccount.aiCredits)
+    }
+
     func testAccountUnderGcpTermsUsesTheProductionHost() async throws {
         let body = Data(#"{"currentTier":{"name":"Antigravity"},"paidTier":{"name":"Standard","usesGcpTos":true}}"#.utf8)
         let http = FakeHTTP([HTTPResponse(status: 200, headers: [:], body: body)])
@@ -803,6 +815,7 @@ final class AntigravityClientTests: XCTestCase {
         let account = try await AntigravityClient(http: http).fetchAccount(accessToken: "tok")
         XCTAssertEqual(account.tier, "Antigravity")
         XCTAssertEqual(account.host, AntigravityClient.dailyHost)
+        XCTAssertFalse(account.aiCredits, "the free tier lists no credits")
     }
 
     func testAccountOnANonJSONBodyThrowsDecoding() async {
@@ -828,6 +841,7 @@ final class AntigravityClientTests: XCTestCase {
         let old = Data(#"{"groups":[],"tier":"Google AI Pro"}"#.utf8)
         let older = try JSONDecoder().decode(AntigravityUsage.self, from: old)
         XCTAssertNil(older.host)
+        XCTAssertNil(older.aiCredits)
     }
 
     func test429HonoursRetryAfter() async {
@@ -873,12 +887,12 @@ final class AntigravityStoreTests: XCTestCase {
     }
 
     private func ok(_ body: Data) -> HTTPResponse { HTTPResponse(status: 200, headers: [:], body: body) }
-    private let account = Data(#"{"paidTier":{"name":"Google AI Pro"}}"#.utf8)
+    private let account = Data(#"{"paidTier":{"name":"Google AI Pro","availableCredits":[{"creditType":"GOOGLE_ONE_AI"}]}}"#.utf8)
     private let gcpAccount = Data(#"{"paidTier":{"name":"Standard","usesGcpTos":true}}"#.utf8)
 
-    private func writeCache(to url: URL, host: String) throws {
+    private func writeCache(to url: URL, host: String, aiCredits: Bool? = nil) throws {
         let summary = try UsageClient.decoder.decode(AntigravityQuotaSummary.self, from: antigravityFixture)
-        let usage = AntigravityUsage(summary: summary, tier: "Google AI Pro", host: host)
+        let usage = AntigravityUsage(summary: summary, tier: "Google AI Pro", host: host, aiCredits: aiCredits)
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
         let usageJSON = try JSONSerialization.jsonObject(with: enc.encode(usage))
@@ -897,6 +911,7 @@ final class AntigravityStoreTests: XCTestCase {
         XCTAssertEqual(http.requests[1].url, AntigravityClient.summaryURL(host: AntigravityClient.dailyHost))
         XCTAssertEqual(store.usage?.host, AntigravityClient.dailyHost)
         XCTAssertEqual(store.usage?.tier, "Google AI Pro")
+        XCTAssertEqual(store.usage?.aiCredits, true)
         XCTAssertEqual(store.state, .ok)
     }
 
@@ -909,6 +924,7 @@ final class AntigravityStoreTests: XCTestCase {
         XCTAssertEqual(http.requests[1].url, AntigravityClient.summaryURL(host: AntigravityClient.productionHost))
         XCTAssertEqual(store.usage?.host, AntigravityClient.productionHost)
         XCTAssertEqual(store.usage?.tier, "Standard")
+        XCTAssertEqual(store.usage?.aiCredits, false)
     }
 
     @MainActor
@@ -1018,6 +1034,18 @@ final class AntigravityStoreTests: XCTestCase {
         XCTAssertEqual(store.usage?.tier, "Google AI Pro")
         XCTAssertEqual(store.usage?.host, AntigravityClient.productionHost, "the server's backend is remembered")
         XCTAssertEqual(store.usage?.gemini?.buckets.map(\.window), ["5h", "weekly"])
+    }
+
+    @MainActor
+    func testIDEAnswerKeepsTheCachedAICreditsFlag() async throws {
+        let cache = tempURL("cache")
+        try writeCache(to: cache, host: AntigravityClient.dailyHost, aiCredits: true)
+        let local = FakeHTTP([ok(localQuotaFixture), ok(localStatusFixture)])
+        let store = try makeExpiredStore(local: local, cacheURL: cache)
+        await store.refresh(reason: "test")
+
+        XCTAssertEqual(store.state, .ok)
+        XCTAssertEqual(store.usage?.aiCredits, true, "the IDE says nothing about credits, so the last answer stands")
     }
 
     @MainActor

@@ -173,8 +173,9 @@ final class StatusItemController: NSObject {
         let extra = menu.addItem(withTitle: "Extra usage credits", action: #selector(toggleExtraUsage), keyEquivalent: "")
         extra.target = self
         extra.state = Preferences.extraUsage ? .on : .off
-        extra.toolTip = "Shows the month's extra-usage credits under the Claude rows when the account has them "
-            + "enabled, and warns on them like any other window."
+        extra.toolTip = "Shows the month's extra-usage credits as one more row under the Claude bars "
+            + "(warned on like any other window) and the plan's AI credits under the Antigravity bars. "
+            + "Off hides both rows."
 
         let tint = NSMenuItem(title: "Menu bar tint", action: nil, keyEquivalent: "")
         let choices = NSMenu()
@@ -268,7 +269,7 @@ struct MenuBarTitle {
         case nil: return .secondaryLabelColor
         case .green: return .systemGreen
         case .yellow: return .systemYellow
-        case .lightRed: return UsageColor.lightRed
+        case .red: return .systemRed
         case .darkRed: return UsageColor.darkRed
         }
     }

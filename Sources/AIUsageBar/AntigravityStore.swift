@@ -103,7 +103,8 @@ final class AntigravityStore {
         let summary = try await client.fetch(accessToken: token, host: host)
         // Default level so `log show` finds it after the fact; info and debug are memory-only.
         Self.log.notice("fetch ok (\(reason, privacy: .public)) via \(host, privacy: .public): \(summary.logLine, privacy: .public)")
-        adopt(AntigravityUsage(summary: summary, tier: account?.tier ?? usage?.tier, host: host))
+        adopt(AntigravityUsage(summary: summary, tier: account?.tier ?? usage?.tier, host: host,
+                               aiCredits: account?.aiCredits ?? usage?.aiCredits))
     }
 
     /// The IDE's own language server, on localhost. False when it is not running or would not
@@ -116,7 +117,9 @@ final class AntigravityStore {
             // gets a token asks the same one.
             let host = result.endpoint.flatMap { AntigravityClient.isKnownHost($0) ? $0 : nil } ?? remembered
             Self.log.notice("fetch ok (\(reason, privacy: .public)) via Antigravity pid \(result.pid, privacy: .public) port \(result.port, privacy: .public) (\(result.endpoint ?? "?", privacy: .public)), token path failed: \(tokenError, privacy: .public): \(result.summary.logLine, privacy: .public)")
-            adopt(AntigravityUsage(summary: result.summary, tier: result.tier ?? usage?.tier, host: host))
+            // The IDE's status call says nothing about credits, so the last account lookup's answer stands.
+            adopt(AntigravityUsage(summary: result.summary, tier: result.tier ?? usage?.tier, host: host,
+                                   aiCredits: usage?.aiCredits))
             return true
         } catch {
             let msg = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

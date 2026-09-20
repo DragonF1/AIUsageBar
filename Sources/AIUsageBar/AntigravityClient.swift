@@ -72,8 +72,12 @@ struct AntigravityUsage: Codable, Equatable {
     var tier: String?
     /// Backend the numbers came from; kept in the cache so a poll whose `loadCodeAssist` fails asks the same one.
     var host: String?
+    /// True when the plan can spend Google One AI credits once a limit is out (`loadCodeAssist`
+    /// lists them under `paidTier.availableCredits`). Nil until an account lookup has said either way.
+    /// No endpoint reports the balance, so the row it feeds stays an empty bar.
+    var aiCredits: Bool?
 
-    init(summary: AntigravityQuotaSummary, tier: String? = nil, host: String? = nil) {
+    init(summary: AntigravityQuotaSummary, tier: String? = nil, host: String? = nil, aiCredits: Bool? = nil) {
         groups = (summary.groups ?? []).enumerated().compactMap { index, g in
             let buckets = (g.buckets ?? []).enumerated().map { bIndex, b -> Bucket in
                 // proto3 JSON omits zero-valued fields: an exhausted bucket arrives without remainingFraction.
@@ -93,6 +97,7 @@ struct AntigravityUsage: Codable, Equatable {
         }
         self.tier = tier
         self.host = host
+        self.aiCredits = aiCredits
     }
 
     private static func windowRank(_ window: String?) -> Int {
@@ -142,6 +147,9 @@ struct AntigravityClient {
     struct Account: Equatable {
         var tier: String?
         var usesGcpTos: Bool
+        /// The paid tier lists `availableCredits` with `creditType` "GOOGLE_ONE_AI" when the plan
+        /// may spend Google One AI credits; the free tier lists nothing.
+        var aiCredits = false
 
         var host: String { usesGcpTos ? AntigravityClient.productionHost : AntigravityClient.dailyHost }
     }
@@ -164,8 +172,10 @@ struct AntigravityClient {
         }
         let paid = obj["paidTier"] as? [String: Any]
         let current = (obj["currentTier"] as? [String: Any])?["name"] as? String
+        let credits = (paid?["availableCredits"] as? [[String: Any]]) ?? []
         return Account(tier: (paid?["name"] as? String) ?? current,
-                       usesGcpTos: (paid?["usesGcpTos"] as? Bool) ?? false)
+                       usesGcpTos: (paid?["usesGcpTos"] as? Bool) ?? false,
+                       aiCredits: credits.contains { ($0["creditType"] as? String) == "GOOGLE_ONE_AI" })
     }
 
     private func send(_ url: URL, accessToken: String, body: String) async throws -> HTTPResponse {

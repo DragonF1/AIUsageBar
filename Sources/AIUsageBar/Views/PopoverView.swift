@@ -140,10 +140,14 @@ struct PopoverView: View {
                              pace: reading.flatMap { monitor.paceLine(for: $0.id, window: $0.window, now: now) },
                              dimmed: store.isStale)
                 }
-                if extraUsage, let extra = store.usage?.extraUsage, extra.isActive {
+                // Always drawn while the switch is on: an account without extra usage gets an
+                // empty bar and a note rather than a row that comes and goes.
+                if extraUsage {
+                    let extra = store.usage?.extraUsage
+                    let active = extra?.isActive ?? false
                     LimitRow(title: "Extra usage",
-                             percent: extra.percent,
-                             detail: extra.detailText,
+                             percent: active ? extra?.percent : nil,
+                             detail: active ? extra?.detailText : "Not enabled on this account",
                              dimmed: store.isStale)
                 }
             }

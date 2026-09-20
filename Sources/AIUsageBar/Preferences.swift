@@ -26,8 +26,8 @@ enum Preferences {
         set { defaults.set(newValue, forKey: Key.notifications) }
     }
 
-    /// Show the month's extra-usage credits under the Claude rows (and warn on them like any
-    /// other window). On by default; the row only appears for an account that has them enabled.
+    /// Show the credits rows: the month's extra-usage credits under the Claude rows (warned on
+    /// like any other window) and the AI credits row under the Antigravity rows. On by default.
     static var extraUsage: Bool {
         get { defaults.object(forKey: Key.extraUsage) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.extraUsage) }

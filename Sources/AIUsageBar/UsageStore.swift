@@ -142,8 +142,8 @@ final class UsageStore {
     }()
 }
 
-/// Green / yellow / light red / dark red thresholds, shared by the menu bar icon and the rows:
-/// green under 75%, yellow from 75, light red from 85, dark red from 95.
+/// Green / yellow / red / dark red thresholds, shared by the menu bar icon and the rows:
+/// green under 75%, yellow from 75, red from 85, dark red from 95.
 enum UsageColor {
     enum Level { case low, medium, high, critical }
 
@@ -157,11 +157,10 @@ enum UsageColor {
     }
 
     /// Menu bar icon tint, one colour per level.
-    enum Icon: Equatable { case green, yellow, lightRed, darkRed }
+    enum Icon: Equatable { case green, yellow, red, darkRed }
 
-    // The two reds sit either side of systemRed so they stay tellable apart from each
-    // other and from yellow, in the menu bar and on the bars alike.
-    static let lightRed = NSColor(srgbRed: 1.0, green: 0.52, blue: 0.5, alpha: 1)
+    // Red is the system red; dark red sits well below it so the two stay tellable apart
+    // in the menu bar and on the bars alike.
     static let darkRed = NSColor(srgbRed: 0.62, green: 0.05, blue: 0.09, alpha: 1)
 
     /// `auto`: the icon follows the 5-hour window, except that a weekly window at 85% or
@@ -184,7 +183,7 @@ enum UsageColor {
         switch level(for: percent) {
         case .low: return .green
         case .medium: return .yellow
-        case .high: return .lightRed
+        case .high: return .red
         case .critical: return .darkRed
         }
     }

@@ -14,7 +14,7 @@ struct LimitRow: View {
         switch UsageColor.rowIcon(percent) {
         case .green: return .green
         case .yellow: return .yellow
-        case .lightRed: return Color(nsColor: UsageColor.lightRed)
+        case .red: return .red
         case .darkRed: return Color(nsColor: UsageColor.darkRed)
         }
     }

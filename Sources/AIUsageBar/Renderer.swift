@@ -355,7 +355,7 @@ struct ScreenshotFixture {
     // MARK: Claude usage
 
     /// Three polls: three hours ago, 45 minutes ago and now, rising so both windows forecast.
-    /// The rows land one per colour band (green, yellow, light red) so the screenshots show
+    /// The rows land one per colour band (green, yellow, red) so the screenshots show
     /// the scale.
     var claudeSamples: [(at: Date, response: UsageResponse)] {
         [(now.addingTimeInterval(-3 * 3600), claudeUsage(session: 18, weekly: 75, opus: 86)),
@@ -415,7 +415,7 @@ struct ScreenshotFixture {
                   buckets: [bucket("3p-weekly", window: "weekly", remaining: otherWeekly),
                             bucket("3p-5h", window: "5h", remaining: 1)]),
         ], description: nil)
-        return AntigravityUsage(summary: summary, tier: tier, host: AntigravityClient.dailyHost)
+        return AntigravityUsage(summary: summary, tier: tier, host: AntigravityClient.dailyHost, aiCredits: true)
     }
 
     // MARK: Status
