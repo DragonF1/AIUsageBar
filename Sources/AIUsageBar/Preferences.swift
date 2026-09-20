@@ -10,6 +10,7 @@ enum Preferences {
         static let menuBarMetric = "menuBarMetric"
         static let costRange = "costRange"
         static let extraUsage = "extraUsage"
+        static let colorScale = "colorScale"
     }
 
     static var defaults: UserDefaults = .standard
@@ -38,18 +39,28 @@ enum Preferences {
         get { MenuBarMetric(rawValue: defaults.string(forKey: Key.menuBarMetric) ?? "") ?? .auto }
         set { defaults.set(newValue.rawValue, forKey: Key.menuBarMetric) }
     }
+
+    /// The cutoffs and colours for the four usage bands; garbage or missing data falls back
+    /// to `.default`, which is the original fixed 75/85/95 scale.
+    static var colorScale: ColorScale {
+        get { ColorScale.decode(defaults.data(forKey: Key.colorScale)) }
+        set { defaults.set(newValue.normalized().encoded(), forKey: Key.colorScale) }
+    }
 }
 
 /// What tints the menu bar icon. `auto` is the original rule: the 5-hour window, unless the
-/// weekly one is at 85% or more.
+/// weekly one has reached the scale's high cutoff (85% on the default scale).
 enum MenuBarMetric: String, CaseIterable {
     case auto
     case session
     case weekly
 
-    var title: String {
+    /// Named against the current scale, so the `auto` label quotes the cutoff it really uses.
+    var title: String { title(scale: Preferences.colorScale) }
+
+    func title(scale: ColorScale) -> String {
         switch self {
-        case .auto: return "Auto (5-hour, weekly from 85%)"
+        case .auto: return "Auto (5-hour, weekly from \(Int(scale.highCutoff.rounded()))%)"
         case .session: return "5-hour window"
         case .weekly: return "Weekly window"
         }

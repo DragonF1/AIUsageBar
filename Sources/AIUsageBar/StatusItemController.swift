@@ -15,6 +15,7 @@ final class StatusItemController: NSObject {
     private let sessionsWindow: TokenWindowController
     private let costWindow: TokenWindowController
     private let antigravityCostWindow: TokenWindowController
+    private let colorsWindow: SettingsWindowController
     private var observation: Task<Void, Never>?
     private var outsideClickMonitor: Any?
 
@@ -32,6 +33,7 @@ final class StatusItemController: NSObject {
         sessionsWindow = .sessions(tokens: tokens)
         costWindow = .cost(ledger: tokens, autosaveName: "CostWindow")
         antigravityCostWindow = .cost(ledger: antigravityTokens, autosaveName: "AntigravityCostWindow")
+        colorsWindow = .colors()
         super.init()
 
         popover.behavior = .transient
@@ -42,6 +44,7 @@ final class StatusItemController: NSObject {
                                                                 onShowSessions: { [weak self] in self?.showSessions() },
                                                                 onShowCost: { [weak self] in self?.costWindow.show() },
                                                                 onShowAntigravityCost: { [weak self] in self?.antigravityCostWindow.show() },
+                                                                onShowColors: { [weak self] in self?.showColors() },
                                                                 onQuit: { NSApp.terminate(nil) }))
         // Content grows when the status banner or rows arrive after the popover is open;
         // publishing the fitting size lets NSPopover resize instead of clipping the top.
@@ -86,14 +89,15 @@ final class StatusItemController: NSObject {
         // live in the popover only.
         let tab = UsageTab.current
         let metric = Preferences.menuBarMetric
+        let scale = Preferences.colorScale
         let title: MenuBarTitle
         switch tab {
         case .claude:
             title = MenuBarTitle(tab: tab, session: store.sessionPercent, weekly: store.weeklyPercent,
-                                 isStale: store.isStale, metric: metric)
+                                 isStale: store.isStale, metric: metric, scale: scale)
         case .antigravity:
             title = MenuBarTitle(tab: tab, session: antigravity.geminiSessionPercent, weekly: antigravity.geminiWeeklyPercent,
-                                 isStale: antigravity.isStale, metric: metric)
+                                 isStale: antigravity.isStale, metric: metric, scale: scale)
         }
         button.attributedTitle = title.attributedText
         button.image = title.image
@@ -146,6 +150,11 @@ final class StatusItemController: NSObject {
         sessionsWindow.show()
     }
 
+    private func showColors() {
+        closePopover()
+        colorsWindow.show()
+    }
+
     private func closePopover() {
         if let outsideClickMonitor {
             NSEvent.removeMonitor(outsideClickMonitor)
@@ -187,6 +196,8 @@ final class StatusItemController: NSObject {
         }
         tint.submenu = choices
         menu.addItem(tint)
+
+        menu.addItem(withTitle: "Usage colours…", action: #selector(showColorsMenuItem), keyEquivalent: "").target = self
 
         menu.addItem(.separator())
         menu.addItem(withTitle: UsagePage.title(for: UsageTab.current), action: #selector(openUsagePage), keyEquivalent: "").target = self
@@ -239,6 +250,8 @@ final class StatusItemController: NSObject {
 
     @objc private func openUsagePage() { UsagePage.open(for: UsageTab.current) }
 
+    @objc private func showColorsMenuItem() { showColors() }
+
     @objc private func quit() { NSApp.terminate(nil) }
 }
 
@@ -254,24 +267,21 @@ struct MenuBarTitle {
     var text: String
     var tint: UsageColor.Icon?
     var stale: Bool
+    var scale: ColorScale
 
-    init(tab: UsageTab, session: Double?, weekly: Double?, isStale: Bool, metric: MenuBarMetric) {
+    init(tab: UsageTab, session: Double?, weekly: Double?, isStale: Bool, metric: MenuBarMetric, scale: ColorScale = .default) {
         func pct(_ v: Double?) -> String { v.map { "\(Int($0.rounded()))%" } ?? "–" }
         self.tab = tab
         // Leading space pads the gap between the icon and the numbers.
         text = " \(pct(session)) / \(pct(weekly))"
-        tint = UsageColor.icon(session: session, weekly: weekly, metric: metric)
+        self.scale = scale
+        tint = UsageColor.icon(session: session, weekly: weekly, metric: metric, scale: scale)
         stale = isStale || tint == nil
     }
 
     var iconColor: NSColor {
-        switch stale ? nil : tint {
-        case nil: return .secondaryLabelColor
-        case .green: return .systemGreen
-        case .yellow: return .systemYellow
-        case .red: return .systemRed
-        case .darkRed: return UsageColor.darkRed
-        }
+        guard !stale, let tint else { return .secondaryLabelColor }
+        return scale.nsColor(for: tint.level)
     }
 
     var attributedText: NSAttributedString {

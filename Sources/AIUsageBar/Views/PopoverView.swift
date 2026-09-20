@@ -11,6 +11,7 @@ struct PopoverView: View {
     var onShowSessions: () -> Void
     var onShowCost: () -> Void
     var onShowAntigravityCost: () -> Void
+    var onShowColors: () -> Void
     var onQuit: () -> Void
 
     @AppStorage(UsageTab.key) private var tab: UsageTab = .claude
@@ -256,6 +257,8 @@ struct PopoverView: View {
             }
             Divider()
             Button(UsagePage.title(for: tab)) { UsagePage.open(for: tab) }
+            Divider()
+            Button("Usage colours…") { onShowColors() }
         } label: {
             Image(systemName: "gearshape")
                 .font(.body)

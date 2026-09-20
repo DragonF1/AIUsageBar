@@ -427,6 +427,39 @@ final class PreferenceModelTests: XCTestCase {
         XCTAssertEqual(try settings(#"{"notifications": {}}"#).notificationThresholds, [80, 95])
     }
 
+    /// Swaps `Preferences.defaults` for a throwaway suite, restoring the real one and wiping
+    /// the suite when the test ends, whichever way it ends.
+    private func withScratchDefaults(_ body: (UserDefaults) throws -> Void) rethrows {
+        let original = Preferences.defaults
+        let suiteName = "AIUsageBarTests-\(UUID())"
+        let suite = UserDefaults(suiteName: suiteName)!
+        Preferences.defaults = suite
+        defer {
+            Preferences.defaults = original
+            suite.removePersistentDomain(forName: suiteName)
+        }
+        try body(suite)
+    }
+
+    func testColorScalePersistsThroughSwappedDefaults() {
+        withScratchDefaults { _ in
+            XCTAssertEqual(Preferences.colorScale, .default, "a fresh suite has nothing stored")
+
+            var custom = ColorScale.default
+            custom.mediumCutoff = 60
+            custom.low = .custom(RGBA(red: 0.1, green: 0.2, blue: 0.3))
+            Preferences.colorScale = custom
+            XCTAssertEqual(Preferences.colorScale, custom.normalized())
+        }
+    }
+
+    func testColorScaleFallsBackOnCorruptData() {
+        withScratchDefaults { suite in
+            suite.set(Data([0x00, 0x01, 0xFF]), forKey: Preferences.Key.colorScale)
+            XCTAssertEqual(Preferences.colorScale, .default)
+        }
+    }
+
     @MainActor func testThresholdTextForTheMenu() {
         XCTAssertEqual(StatusItemController.thresholdText([80, 95]), "80% or 95%")
         XCTAssertEqual(StatusItemController.thresholdText([50, 80, 95]), "50%, 80% or 95%")

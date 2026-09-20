@@ -7,16 +7,14 @@ struct LimitRow: View {
     var pace: PaceLine? = nil
     var dimmed = false
 
+    @AppStorage(Preferences.Key.colorScale, store: Preferences.defaults) private var colorScaleData: Data = ColorScale.defaultData
+
     private var clamped: Double { min(100, max(0, percent ?? 0)) }
 
     private var tint: Color {
         guard let percent else { return .secondary }
-        switch UsageColor.rowIcon(percent) {
-        case .green: return .green
-        case .yellow: return .yellow
-        case .red: return .red
-        case .darkRed: return Color(nsColor: UsageColor.darkRed)
-        }
+        let scale = ColorScale.decode(colorScaleData)
+        return scale.color(for: scale.level(for: percent))
     }
 
     var body: some View {

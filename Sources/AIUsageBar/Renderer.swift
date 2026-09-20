@@ -100,6 +100,7 @@ enum ScreenshotRenderer {
             Preferences.Key.notifications: true,
             Preferences.Key.startAtLogin: false,
             Preferences.Key.menuBarMetric: MenuBarMetric.auto.rawValue,
+            Preferences.Key.colorScale: ColorScale.defaultData,
             "AppleAccentColor": 4,
             "AppleHighlightColor": "0.698039 0.843137 1.000000 Blue",
         ], forName: UserDefaults.argumentDomain)
@@ -195,7 +196,7 @@ enum ScreenshotRenderer {
         let view = PopoverView(store: s.usage, antigravity: s.antigravity, status: s.status,
                                antigravityStatus: s.antigravityStatus, tokens: s.tokens,
                                antigravityTokens: s.antigravityTokens, monitor: s.monitor,
-                               onShowSessions: {}, onShowCost: {}, onShowAntigravityCost: {}, onQuit: {})
+                               onShowSessions: {}, onShowCost: {}, onShowAntigravityCost: {}, onShowColors: {}, onQuit: {})
         let hosting = NSHostingController(rootView: view)
         hosting.sizingOptions = [.preferredContentSize]
         // Key, like the real popover: an inactive window draws the progress bars grey.
