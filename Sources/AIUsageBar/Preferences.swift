@@ -15,6 +15,7 @@ enum Preferences {
         static let menuBarFormat = "menuBarFormat"
         static let menuBarRules = "menuBarRules"
         static let showPace = "showPace"
+        static let antigravityMenuBarOther = "antigravityMenuBarOther"
     }
 
     static var defaults: UserDefaults = .standard
@@ -82,6 +83,14 @@ enum Preferences {
     static var showPace: Bool {
         get { defaults.object(forKey: Key.showPace) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.showPace) }
+    }
+
+    /// On the Antigravity tab, read the "Claude and GPT models" group's percentages and reset
+    /// times for the menu bar instead of Gemini's. Off by default, matching the app's original
+    /// behaviour; the Claude tab is never affected by this switch.
+    static var antigravityMenuBarOther: Bool {
+        get { defaults.object(forKey: Key.antigravityMenuBarOther) as? Bool ?? false }
+        set { defaults.set(newValue, forKey: Key.antigravityMenuBarOther) }
     }
 }
 

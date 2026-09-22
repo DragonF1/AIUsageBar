@@ -515,6 +515,16 @@ final class PreferenceModelTests: XCTestCase {
         }
     }
 
+    func testAntigravityMenuBarOtherDefaultsFalseAndRoundTrips() {
+        withScratchDefaults { _ in
+            XCTAssertFalse(Preferences.antigravityMenuBarOther, "a fresh suite has nothing stored")
+            Preferences.antigravityMenuBarOther = true
+            XCTAssertTrue(Preferences.antigravityMenuBarOther)
+            Preferences.antigravityMenuBarOther = false
+            XCTAssertFalse(Preferences.antigravityMenuBarOther)
+        }
+    }
+
     func testMenuBarFormatDefaultsAndRoundTrips() {
         withScratchDefaults { _ in
             XCTAssertEqual(Preferences.menuBarFormat, Preferences.defaultMenuBarFormat, "a fresh suite has nothing stored")

@@ -85,13 +85,15 @@ final class StatusItemController: NSObject {
     @objc private func render() {
         guard let button = item.button else { return }
         // Claude tab: "8% / 32%" = 5-hour session / weekly all models.
-        // Antigravity tab: "8% / 52%" = Gemini 5-hour / Gemini weekly. Claude and GPT limits
-        // live in the popover only.
+        // Antigravity tab: "8% / 52%" = Gemini 5-hour / Gemini weekly by default; the "Antigravity
+        // reads Claude and GPT limits" switch in Settings swaps in that group's numbers instead.
+        // Either way, the group not shown still lives in the popover.
         let tab = UsageTab.current
         let scale = Preferences.colorScale
         let values = MenuBarValues.current(tab: tab, usage: store, antigravity: antigravity, tokens: tokens,
                                            antigravityTokens: antigravityTokens, now: Date(),
-                                           showRemaining: Preferences.showRemaining)
+                                           showRemaining: Preferences.showRemaining,
+                                           antigravityOther: Preferences.antigravityMenuBarOther)
         // The rules list wins first, in list order; the plain template field is what it always was.
         let format = MenuBarRules.format(for: values, rules: Preferences.menuBarRules,
                                          fallback: Preferences.menuBarFormat, scale: scale)

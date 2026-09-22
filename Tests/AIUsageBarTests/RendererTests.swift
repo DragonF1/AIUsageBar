@@ -143,4 +143,59 @@ final class RendererTests: XCTestCase {
         XCTAssertTrue(stale.stale)
         XCTAssertEqual(stale.iconColor, .secondaryLabelColor)
     }
+
+    // MARK: - MenuBarValues.current
+
+    /// Builds a Claude usage response with just the two rows `MenuBarValues.current` reads.
+    private func claudeUsage(session: Double, weekly: Double) -> UsageResponse {
+        UsageResponse(limits: [
+            .init(kind: "session", group: "session", percent: session, resetsAt: now.addingTimeInterval(2 * 3600), isActive: true),
+            .init(kind: "weekly_all", group: "weekly", percent: weekly, resetsAt: now.addingTimeInterval(4 * 86400), isActive: true),
+        ])
+    }
+
+    @MainActor func testMenuBarValuesCurrentReadsGeminiByDefaultOnAntigravityTab() throws {
+        let summary = try UsageClient.decoder.decode(AntigravityQuotaSummary.self, from: antigravityFixture)
+        let antigravity = AntigravityStore(cacheURL: nil)
+        antigravity.adopt(AntigravityUsage(summary: summary, tier: "Google AI Pro"))
+
+        let values = MenuBarValues.current(tab: .antigravity, usage: UsageStore(cacheURL: nil), antigravity: antigravity,
+                                           tokens: TokenStore(), antigravityTokens: AntigravityTokenStore(),
+                                           now: now, showRemaining: false, antigravityOther: false)
+        XCTAssertEqual(values.sessionPercent, antigravity.geminiSessionPercent)
+        XCTAssertEqual(values.weeklyPercent, antigravity.geminiWeeklyPercent)
+        XCTAssertEqual(values.sessionResetsAt, antigravity.geminiSessionResetsAt)
+        XCTAssertEqual(values.weeklyResetsAt, antigravity.geminiWeeklyResetsAt)
+    }
+
+    @MainActor func testMenuBarValuesCurrentReadsTheOtherGroupWhenAsked() throws {
+        let summary = try UsageClient.decoder.decode(AntigravityQuotaSummary.self, from: antigravityFixture)
+        let antigravity = AntigravityStore(cacheURL: nil)
+        antigravity.adopt(AntigravityUsage(summary: summary, tier: "Google AI Pro"))
+
+        let values = MenuBarValues.current(tab: .antigravity, usage: UsageStore(cacheURL: nil), antigravity: antigravity,
+                                           tokens: TokenStore(), antigravityTokens: AntigravityTokenStore(),
+                                           now: now, showRemaining: false, antigravityOther: true)
+        XCTAssertEqual(values.sessionPercent, antigravity.otherSessionPercent)
+        XCTAssertEqual(values.weeklyPercent, antigravity.otherWeeklyPercent)
+        XCTAssertEqual(values.sessionResetsAt, antigravity.otherSessionResetsAt)
+        XCTAssertEqual(values.weeklyResetsAt, antigravity.otherWeeklyResetsAt)
+        // Genuinely the other group's numbers, not Gemini's read twice.
+        XCTAssertNotEqual(values.weeklyPercent, antigravity.geminiWeeklyPercent)
+    }
+
+    @MainActor func testMenuBarValuesCurrentAntigravityOtherDoesNotAffectTheClaudeTab() {
+        let usage = UsageStore(cacheURL: nil)
+        usage.adopt(claudeUsage(session: 34, weekly: 58), plan: nil, at: now)
+
+        let claudeOff = MenuBarValues.current(tab: .claude, usage: usage, antigravity: AntigravityStore(cacheURL: nil),
+                                              tokens: TokenStore(), antigravityTokens: AntigravityTokenStore(),
+                                              now: now, showRemaining: false, antigravityOther: false)
+        let claudeOn = MenuBarValues.current(tab: .claude, usage: usage, antigravity: AntigravityStore(cacheURL: nil),
+                                             tokens: TokenStore(), antigravityTokens: AntigravityTokenStore(),
+                                             now: now, showRemaining: false, antigravityOther: true)
+        XCTAssertEqual(claudeOff, claudeOn)
+        XCTAssertEqual(claudeOn.sessionPercent, usage.sessionPercent)
+        XCTAssertEqual(claudeOn.weeklyPercent, usage.weeklyPercent)
+    }
 }

@@ -141,11 +141,21 @@ final class AntigravityStore {
 
     // MARK: - derived
 
-    /// The menu bar tracks the Gemini group only, as "5h% / weekly%" like the Claude tab.
-    var geminiSessionPercent: Double? { usage?.gemini?.buckets.first { $0.window == "5h" }?.percentUsed }
-    var geminiWeeklyPercent: Double? { usage?.gemini?.buckets.first { $0.window == "weekly" }?.percentUsed }
-    var geminiSessionResetsAt: Date? { usage?.gemini?.buckets.first { $0.window == "5h" }?.resetsAt }
-    var geminiWeeklyResetsAt: Date? { usage?.gemini?.buckets.first { $0.window == "weekly" }?.resetsAt }
+    /// The menu bar tracks one group only, as "5h% / weekly%" like the Claude tab: Gemini by
+    /// default, or "Claude and GPT models" when `Preferences.antigravityMenuBarOther` asks for it.
+    var geminiSessionPercent: Double? { bucket(of: usage?.gemini, window: "5h")?.percentUsed }
+    var geminiWeeklyPercent: Double? { bucket(of: usage?.gemini, window: "weekly")?.percentUsed }
+    var geminiSessionResetsAt: Date? { bucket(of: usage?.gemini, window: "5h")?.resetsAt }
+    var geminiWeeklyResetsAt: Date? { bucket(of: usage?.gemini, window: "weekly")?.resetsAt }
+
+    var otherSessionPercent: Double? { bucket(of: usage?.other, window: "5h")?.percentUsed }
+    var otherWeeklyPercent: Double? { bucket(of: usage?.other, window: "weekly")?.percentUsed }
+    var otherSessionResetsAt: Date? { bucket(of: usage?.other, window: "5h")?.resetsAt }
+    var otherWeeklyResetsAt: Date? { bucket(of: usage?.other, window: "weekly")?.resetsAt }
+
+    private func bucket(of group: AntigravityUsage.Group?, window: String) -> AntigravityUsage.Bucket? {
+        group?.buckets.first { $0.window == window }
+    }
 
     var isStale: Bool {
         if case .ok = state { return false }

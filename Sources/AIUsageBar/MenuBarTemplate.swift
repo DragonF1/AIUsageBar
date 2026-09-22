@@ -14,10 +14,11 @@ struct MenuBarValues: Equatable {
 
     /// The values behind whichever tab is showing, read once against `now`. The live menu bar
     /// and the Appearance preview both build from here, so a new token cannot land in one and
-    /// not the other.
+    /// not the other. `antigravityOther` only matters on the Antigravity tab: false reads the
+    /// Gemini group, true reads "Claude and GPT models" instead; the Claude tab ignores it.
     @MainActor static func current(tab: UsageTab, usage: UsageStore, antigravity: AntigravityStore,
                                    tokens: TokenStore, antigravityTokens: AntigravityTokenStore,
-                                   now: Date, showRemaining: Bool) -> MenuBarValues
+                                   now: Date, showRemaining: Bool, antigravityOther: Bool) -> MenuBarValues
     {
         let today = TokenWindow.todayStart(now: now)
         switch tab {
@@ -26,8 +27,12 @@ struct MenuBarValues: Equatable {
                                  sessionResetsAt: usage.usage?.sessionResetsAt, weeklyResetsAt: usage.usage?.weeklyResetsAt,
                                  todayCost: tokens.totals(since: today).cost, now: now, showRemaining: showRemaining)
         case .antigravity:
-            return MenuBarValues(sessionPercent: antigravity.geminiSessionPercent, weeklyPercent: antigravity.geminiWeeklyPercent,
-                                 sessionResetsAt: antigravity.geminiSessionResetsAt, weeklyResetsAt: antigravity.geminiWeeklyResetsAt,
+            let sessionPercent = antigravityOther ? antigravity.otherSessionPercent : antigravity.geminiSessionPercent
+            let weeklyPercent = antigravityOther ? antigravity.otherWeeklyPercent : antigravity.geminiWeeklyPercent
+            let sessionResetsAt = antigravityOther ? antigravity.otherSessionResetsAt : antigravity.geminiSessionResetsAt
+            let weeklyResetsAt = antigravityOther ? antigravity.otherWeeklyResetsAt : antigravity.geminiWeeklyResetsAt
+            return MenuBarValues(sessionPercent: sessionPercent, weeklyPercent: weeklyPercent,
+                                 sessionResetsAt: sessionResetsAt, weeklyResetsAt: weeklyResetsAt,
                                  todayCost: antigravityTokens.totals(since: today).cost, now: now, showRemaining: showRemaining)
         }
     }

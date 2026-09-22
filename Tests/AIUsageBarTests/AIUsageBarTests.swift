@@ -1136,6 +1136,36 @@ final class AntigravityStoreTests: XCTestCase {
         XCTAssertNotNil(store.geminiSessionResetsAt)
         XCTAssertNotNil(store.geminiWeeklyResetsAt)
     }
+
+    /// Sibling of the Gemini accessors above, for the "Claude and GPT models" group the
+    /// `antigravityMenuBarOther` switch reads instead.
+    @MainActor
+    func testOtherResetAccessorsMirrorThePercentOnes() throws {
+        let summary = try UsageClient.decoder.decode(AntigravityQuotaSummary.self, from: antigravityFixture)
+        let usage = AntigravityUsage(summary: summary, tier: "Google AI Pro", host: AntigravityClient.dailyHost, aiCredits: nil)
+        let store = AntigravityStore(cacheURL: nil)
+        store.adopt(usage)
+
+        XCTAssertNotNil(store.otherSessionPercent)
+        XCTAssertNotNil(store.otherWeeklyPercent)
+        XCTAssertEqual(store.otherSessionPercent, usage.other?.buckets.first { $0.window == "5h" }?.percentUsed)
+        XCTAssertEqual(store.otherWeeklyPercent, usage.other?.buckets.first { $0.window == "weekly" }?.percentUsed)
+        XCTAssertEqual(store.otherSessionResetsAt, usage.other?.buckets.first { $0.window == "5h" }?.resetsAt)
+        XCTAssertEqual(store.otherWeeklyResetsAt, usage.other?.buckets.first { $0.window == "weekly" }?.resetsAt)
+        XCTAssertNotNil(store.otherSessionResetsAt)
+        XCTAssertNotNil(store.otherWeeklyResetsAt)
+        // The two groups are genuinely different buckets, not the same value read twice.
+        XCTAssertNotEqual(store.otherWeeklyPercent, store.geminiWeeklyPercent)
+    }
+
+    @MainActor
+    func testOtherAccessorsAreNilWithoutUsage() {
+        let store = AntigravityStore(cacheURL: nil)
+        XCTAssertNil(store.otherSessionPercent)
+        XCTAssertNil(store.otherWeeklyPercent)
+        XCTAssertNil(store.otherSessionResetsAt)
+        XCTAssertNil(store.otherWeeklyResetsAt)
+    }
 }
 
 /// Marks a process listing that a test expects never to happen.
