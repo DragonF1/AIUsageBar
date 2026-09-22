@@ -4,9 +4,17 @@ import XCTest
 final class MenuBarRuleTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_789_120_800)
 
-    private func values(session: Double? = nil, weekly: Double? = nil, showRemaining: Bool = false) -> MenuBarValues {
+    private func values(session: Double? = nil, weekly: Double? = nil, showRemaining: Bool = false,
+                        readings: [QuotaReading] = []) -> MenuBarValues {
         MenuBarValues(sessionPercent: session, weeklyPercent: weekly, sessionResetsAt: nil, weeklyResetsAt: nil,
-                     todayCost: nil, now: now, showRemaining: showRemaining)
+                     todayCost: nil, now: now, showRemaining: showRemaining, readings: readings)
+    }
+
+    private func reading(id: String, product: String = "Claude Code", name: String = "Fable weekly",
+                         window: QuotaReading.Window = .weekly, percent: Double, resetsAt: Date? = nil,
+                         scope: String = "claude|Fable|", scopeName: String = "Fable") -> QuotaReading {
+        QuotaReading(id: id, product: product, name: name, window: window, percent: percent, resetsAt: resetsAt,
+                    scope: scope, scopeName: scopeName)
     }
 
     // MARK: - Comparison titles
@@ -201,6 +209,165 @@ final class MenuBarRuleTests: XCTestCase {
         XCTAssertFalse(condition.matches(values(session: 90, weekly: 10), scale: .default))
     }
 
+    // MARK: - Limit rules
+
+    func testLimitRuleMatchesWhenIdPresentAndComparisonHolds() {
+        let condition = MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(80),
+                                         limit: MenuBarLimitRef(scope: "claude|Fable|", product: "Claude Code", name: "Fable"))
+        let v = values(readings: [reading(id: "claude|weekly_scoped|Fable|", percent: 85)])
+        XCTAssertTrue(condition.matches(v, scale: .default))
+    }
+
+    func testLimitRuleDoesNotMatchWhenComparisonFails() {
+        let condition = MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(80),
+                                         limit: MenuBarLimitRef(scope: "claude|Fable|", product: "Claude Code", name: "Fable"))
+        let v = values(readings: [reading(id: "claude|weekly_scoped|Fable|", percent: 40)])
+        XCTAssertFalse(condition.matches(v, scale: .default))
+    }
+
+    func testLimitRuleNeverMatchesWhenIdIsAbsent() {
+        let condition = MenuBarCondition(window: .session, comparison: .atLeast, threshold: .percent(0),
+                                         limit: MenuBarLimitRef(scope: "antigravity|Gemini Models", product: "Antigravity", name: "Gemini"))
+        let v = values(session: 90, weekly: 90, readings: [reading(id: "claude|weekly_scoped|Fable|", percent: 100)])
+        XCTAssertFalse(condition.matches(v, scale: .default))
+    }
+
+    /// A limit rule fires whichever tab the popover happens to be showing: neither direction of
+    /// mismatch between the targeted limit and the tab's own session/weekly percent should sway
+    /// it.
+    func testLimitRuleFiresRegardlessOfTheCurrentTabsWindowPercent() {
+        let condition = MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(80),
+                                         limit: MenuBarLimitRef(scope: "antigravity|Gemini Models", product: "Antigravity", name: "Gemini"))
+        // The "current tab" numbers would fail the threshold; the targeted limit alone decides.
+        let matches = values(session: 5, weekly: 5,
+                             readings: [reading(id: "antigravity|Gemini Models|gemini-weekly", product: "Antigravity", name: "Gemini weekly",
+                                                window: .weekly, percent: 90, scope: "antigravity|Gemini Models", scopeName: "Gemini")])
+        XCTAssertTrue(condition.matches(matches, scale: .default))
+
+        // And vice versa: the tab's own numbers would pass, but the targeted limit does not.
+        let doesNotMatch = values(session: 95, weekly: 95,
+                                  readings: [reading(id: "antigravity|Gemini Models|gemini-weekly", product: "Antigravity", name: "Gemini weekly",
+                                                     window: .weekly, percent: 10, scope: "antigravity|Gemini Models", scopeName: "Gemini")])
+        XCTAssertFalse(condition.matches(doesNotMatch, scale: .default))
+    }
+
+    func testWindowRuleIgnoresReadings() {
+        let condition = MenuBarCondition(window: .session, comparison: .atLeast, threshold: .percent(80))
+        // A reading that would match if this were a limit rule must not sway a window rule.
+        let v = values(session: 10, readings: [reading(id: "claude|session||", window: .fiveHour, percent: 95,
+                                                        scope: "claude||", scopeName: "All models")])
+        XCTAssertFalse(condition.matches(v, scale: .default))
+    }
+
+    /// The scope alone does not pick a window: the same Gemini scope carries both a 5-hour and a
+    /// weekly reading, and the rule's own `window` decides which one a limit rule reads, exactly
+    /// as it would for a tab-relative rule.
+    func testLimitRuleWindowPicksWhichOfTheScopesReadingsIsRead() {
+        let scope = "antigravity|Gemini Models"
+        let fiveHour = reading(id: "antigravity|Gemini Models|gemini-5h", product: "Antigravity", name: "Gemini 5h",
+                               window: .fiveHour, percent: 30, scope: scope, scopeName: "Gemini")
+        let weekly = reading(id: "antigravity|Gemini Models|gemini-weekly", product: "Antigravity", name: "Gemini weekly",
+                             window: .weekly, percent: 70, scope: scope, scopeName: "Gemini")
+        let v = values(readings: [fiveHour, weekly])
+
+        let sessionCondition = MenuBarCondition(window: .session, comparison: .atLeast, threshold: .percent(0),
+                                                limit: MenuBarLimitRef(scope: scope, product: "Antigravity", name: "Gemini"))
+        XCTAssertEqual(sessionCondition.reading(in: v).percent, 30)
+
+        let weeklyCondition = MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(0),
+                                               limit: MenuBarLimitRef(scope: scope, product: "Antigravity", name: "Gemini"))
+        XCTAssertEqual(weeklyCondition.reading(in: v).percent, 70)
+    }
+
+    /// Fable has no 5-hour reading at all: a rule that targets its scope with `.session` finds
+    /// nothing to read and never matches, while `.weekly` reaches its one reading.
+    func testLimitRuleOnAScopeWithNoFiveHourReadingNeverMatchesSession() {
+        let v = values(readings: [reading(id: "claude|weekly_scoped|Fable|", percent: 85)])
+        let sessionCondition = MenuBarCondition(window: .session, comparison: .atLeast, threshold: .percent(0),
+                                                limit: MenuBarLimitRef(scope: "claude|Fable|", product: "Claude Code", name: "Fable"))
+        XCTAssertFalse(sessionCondition.matches(v, scale: .default))
+
+        let weeklyCondition = MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(0),
+                                               limit: MenuBarLimitRef(scope: "claude|Fable|", product: "Claude Code", name: "Fable"))
+        XCTAssertTrue(weeklyCondition.matches(v, scale: .default))
+    }
+
+    /// Extra usage has only a `.monthly` reading, with no 5-hour/weekly choice to make: either
+    /// window setting reaches it.
+    func testLimitRuleOnAMonthlyOnlyScopeMatchesEitherWindow() {
+        let v = values(readings: [reading(id: "claude|extra_usage", product: "Claude Code", name: "Extra usage",
+                                          window: .monthly, percent: 90, scope: "claude|extra_usage", scopeName: "Extra usage")])
+        let sessionCondition = MenuBarCondition(window: .session, comparison: .atLeast, threshold: .percent(0),
+                                                limit: MenuBarLimitRef(scope: "claude|extra_usage", product: "Claude Code", name: "Extra usage"))
+        XCTAssertTrue(sessionCondition.matches(v, scale: .default))
+
+        let weeklyCondition = MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(0),
+                                               limit: MenuBarLimitRef(scope: "claude|extra_usage", product: "Claude Code", name: "Extra usage"))
+        XCTAssertTrue(weeklyCondition.matches(v, scale: .default))
+    }
+
+    // MARK: - reading(in:)
+
+    func testReadingInReturnsTheTargetedLimitsPercentAndReset() {
+        let resetsAt = now.addingTimeInterval(3600)
+        let condition = MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(0),
+                                         limit: MenuBarLimitRef(scope: "claude|Fable|", product: "Claude Code", name: "Fable"))
+        let v = values(readings: [reading(id: "claude|weekly_scoped|Fable|", percent: 62, resetsAt: resetsAt)])
+        let result = condition.reading(in: v)
+        XCTAssertEqual(result.percent, 62)
+        XCTAssertEqual(result.resetsAt, resetsAt)
+    }
+
+    func testReadingInReturnsNilForAnAbsentLimit() {
+        let condition = MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(0),
+                                         limit: MenuBarLimitRef(scope: "claude|Fable|", product: "Claude Code", name: "Fable"))
+        let result = condition.reading(in: values())
+        XCTAssertNil(result.percent)
+        XCTAssertNil(result.resetsAt)
+    }
+
+    func testReadingInReturnsTheWindowsPercentAndResetForAWindowRule() {
+        let condition = MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(0))
+        var v = values(weekly: 44)
+        v.weeklyResetsAt = now.addingTimeInterval(7200)
+        let result = condition.reading(in: v)
+        XCTAssertEqual(result.percent, 44)
+        XCTAssertEqual(result.resetsAt, v.weeklyResetsAt)
+    }
+
+    // MARK: - Codable (limit)
+
+    /// Every rule saved before this feature existed has no `limit` key at all; the synthesized
+    /// Codable conformance must still decode it, with `limit` reading as nil.
+    func testConditionDecodesWithoutLimitKey() throws {
+        let json = """
+        {"window": "session", "comparison": "atLeast", "threshold": {"percent": {"_0": 80}}}
+        """
+        let condition = try JSONDecoder().decode(MenuBarCondition.self, from: Data(json.utf8))
+        XCTAssertNil(condition.limit)
+        XCTAssertEqual(condition.window, .session)
+    }
+
+    func testConditionRoundTripsWithALimit() throws {
+        let condition = MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(80),
+                                         limit: MenuBarLimitRef(scope: "claude|Fable|", product: "Claude Code", name: "Fable"))
+        let data = try JSONEncoder().encode(condition)
+        let decoded = try JSONDecoder().decode(MenuBarCondition.self, from: data)
+        XCTAssertEqual(decoded, condition)
+    }
+
+    /// The same absent-key tolerance one level up, through a whole rule and `decodeList`, the
+    /// path old rules on disk actually take.
+    func testOldRuleJSONWithoutLimitKeyStillDecodesThroughDecodeList() throws {
+        let json = """
+        [{"condition": {"window": "session", "comparison": "atLeast", "threshold": {"percent": {"_0": 80}}}, "format": "hot"}]
+        """
+        let decoded = MenuBarRule.decodeList(Data(json.utf8))
+        XCTAssertEqual(decoded.count, 1)
+        XCTAssertNil(decoded.first?.condition.limit)
+        XCTAssertEqual(decoded.first?.format, "hot")
+    }
+
     // MARK: - Resolver
 
     func testFallbackWhenNoRulesOrNoneMatch() {
@@ -217,5 +384,34 @@ final class MenuBarRuleTests: XCTestCase {
         let format = MenuBarRules.format(for: v, rules: [rule], fallback: "fallback", scale: .default)
         XCTAssertEqual(format, "{5h}")
         XCTAssertEqual(MenuBarTemplate.render(format, values: v), "20%")
+    }
+
+    func testResolveFillsMatchedFieldsForALimitWinner() {
+        let resetsAt = now.addingTimeInterval(3600)
+        let rule = MenuBarRule(condition: MenuBarCondition(window: .weekly, comparison: .atLeast, threshold: .percent(50),
+                                                           limit: MenuBarLimitRef(scope: "claude|Fable|", product: "Claude Code", name: "Fable")),
+                               format: "{value}")
+        let v = values(readings: [reading(id: "claude|weekly_scoped|Fable|", percent: 62, resetsAt: resetsAt)])
+        let resolved = MenuBarRules.resolve(for: v, rules: [rule], fallback: "fallback", scale: .default)
+        XCTAssertEqual(resolved.format, "{value}")
+        XCTAssertEqual(resolved.values.matchedPercent, 62)
+        XCTAssertEqual(resolved.values.matchedResetsAt, resetsAt)
+    }
+
+    func testResolveFillsMatchedFieldsForAWindowWinner() {
+        let rule = MenuBarRule(condition: MenuBarCondition(window: .session, comparison: .atLeast, threshold: .percent(50)), format: "{value}")
+        var v = values(session: 70)
+        v.sessionResetsAt = now.addingTimeInterval(1800)
+        let resolved = MenuBarRules.resolve(for: v, rules: [rule], fallback: "fallback", scale: .default)
+        XCTAssertEqual(resolved.format, "{value}")
+        XCTAssertEqual(resolved.values.matchedPercent, 70)
+        XCTAssertEqual(resolved.values.matchedResetsAt, v.sessionResetsAt)
+    }
+
+    func testResolveLeavesMatchedFieldsNilOnFallback() {
+        let resolved = MenuBarRules.resolve(for: values(session: 10), rules: [], fallback: "fallback", scale: .default)
+        XCTAssertEqual(resolved.format, "fallback")
+        XCTAssertNil(resolved.values.matchedPercent)
+        XCTAssertNil(resolved.values.matchedResetsAt)
     }
 }

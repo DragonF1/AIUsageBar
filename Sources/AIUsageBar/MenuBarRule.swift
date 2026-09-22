@@ -37,24 +37,68 @@ enum MenuBarThreshold: Codable, Equatable {
     case band(UsageColor.Level)
 }
 
-/// "5-hour greater than or equal to 80%": the window, the comparison and the threshold a rule
-/// watches for.
-/// Pure and stateless; `matches` is the only place a live number ever touches this type.
+/// One specific limit family a rule can target instead of a tab-relative window, "Claude: Fable"
+/// say. `scope` matches a `QuotaReading.scope` (stable across that family's 5-hour and weekly
+/// readings, unique across products); the condition's own `window` then picks which of the
+/// family's windows is actually read, the same independent setting it is for a tab-relative rule.
+/// `product` and `name` are stored alongside `scope`, not derived at match time, so the editor
+/// can still label the rule after that limit stops being reported (a plan change, a renamed
+/// model, a group that no longer appears).
+struct MenuBarLimitRef: Codable, Equatable {
+    var scope: String
+    var product: String
+    var name: String
+}
+
+/// "5-hour greater than or equal to 80%", or "Fable weekly greater than or equal to 80%": the
+/// window plus the comparison and the threshold a rule watches for. With `limit` set, `window`
+/// still picks the 5-hour or weekly reading, but now from that one limit family rather than from
+/// whichever tab is showing: which limit and which window are two independent settings. A nil
+/// `limit` is exactly today's tab-relative behaviour; a non-nil one is evaluated globally, the
+/// same regardless of which tab's numbers `window` would otherwise have read. Pure and stateless;
+/// `matches` is the only place a live number ever touches this type.
 struct MenuBarCondition: Codable, Equatable {
     var window: MenuBarWindow
     var comparison: MenuBarComparison
     var threshold: MenuBarThreshold
+    /// nil for a tab-relative window rule (today's behaviour); set for a rule that targets one
+    /// specific limit family regardless of the tab showing. Optional so a rule saved before this
+    /// feature existed, whose JSON has no `limit` key at all, still decodes.
+    var limit: MenuBarLimitRef?
 
-    /// Reads the window's used percent (never adjusted for "Show remaining", which only affects
-    /// rendering) and compares it to the threshold; a missing percent never matches, so a rule
-    /// stays quiet rather than firing on a window that has not reported yet.
-    func matches(_ values: MenuBarValues, scale: ColorScale) -> Bool {
-        let percent: Double?
-        switch window {
-        case .session: percent = values.sessionPercent
-        case .weekly: percent = values.weeklyPercent
+    /// The percent and reset time this condition actually tests: a specific limit's reading when
+    /// `limit` is set (nil when that scope has no reading fitting `window`, e.g. the limit has
+    /// not reported yet, reads differently after a plan change, or the family (Fable) simply has
+    /// no 5-hour reading to pick), otherwise the tab's session or weekly percent and reset,
+    /// matching `window`.
+    func reading(in values: MenuBarValues) -> (percent: Double?, resetsAt: Date?) {
+        if let limit {
+            let reading = values.readings.first { $0.scope == limit.scope && Self.fits($0.window, window) }
+            return (reading?.percent, reading?.resetsAt)
         }
-        guard let percent else { return false }
+        switch window {
+        case .session: return (values.sessionPercent, values.sessionResetsAt)
+        case .weekly: return (values.weeklyPercent, values.weeklyResetsAt)
+        }
+    }
+
+    /// Whether a reading's own window belongs under a rule's `.session`/`.weekly` setting: a
+    /// `.fiveHour` reading fits `.session`, a `.weekly` reading fits `.weekly`, and a `.monthly`
+    /// reading (extra usage, a single-window family with nothing to choose between) fits either,
+    /// so the rule's window field is simply ignored for it.
+    private static func fits(_ readingWindow: QuotaReading.Window, _ ruleWindow: MenuBarWindow) -> Bool {
+        switch readingWindow {
+        case .fiveHour: return ruleWindow == .session
+        case .weekly: return ruleWindow == .weekly
+        case .monthly: return true
+        }
+    }
+
+    /// Reads the targeted number (never adjusted for "Show remaining", which only affects
+    /// rendering) and compares it to the threshold; a missing percent never matches, so a rule
+    /// stays quiet rather than firing on a window or limit that has not reported yet.
+    func matches(_ values: MenuBarValues, scale: ColorScale) -> Bool {
+        guard let percent = reading(in: values).percent else { return false }
         switch threshold {
         case .percent(let n):
             switch comparison {
@@ -135,5 +179,21 @@ enum MenuBarRules {
 
     static func format(for values: MenuBarValues, rules: [MenuBarRule], fallback: String, scale: ColorScale) -> String {
         winner(for: values, rules: rules, scale: scale)?.format ?? fallback
+    }
+
+    /// Picks the winner exactly like `format`, but also carries the number a limit rule's
+    /// template needs: a copy of `values` with `matchedPercent`/`matchedResetsAt` filled from
+    /// whatever the winning condition actually tested (`MenuBarCondition.reading(in:)`), so
+    /// `{value}`/`{reset}` quote that limit's own figures rather than the tab's. Both stay nil on
+    /// the fallback template, so its tokens read as missing instead of quoting a stale number.
+    static func resolve(for values: MenuBarValues, rules: [MenuBarRule], fallback: String, scale: ColorScale)
+        -> (format: String, values: MenuBarValues)
+    {
+        guard let winner = winner(for: values, rules: rules, scale: scale) else { return (fallback, values) }
+        var resolved = values
+        let reading = winner.condition.reading(in: values)
+        resolved.matchedPercent = reading.percent
+        resolved.matchedResetsAt = reading.resetsAt
+        return (winner.format, resolved)
     }
 }

@@ -21,27 +21,42 @@ struct QuotaReading: Equatable {
     var window: Window
     var percent: Double
     var resetsAt: Date?
+    /// The limit family this reading belongs to: stable across that family's windows, so a rule
+    /// can target "Fable" or "Gemini" once and let its own `window` setting pick the 5-hour or
+    /// weekly reading, rather than the two being welded together the way `id` welds them today.
+    /// The session and weekly_all limits share one scope (there is only ever one "all models"
+    /// family), while a weekly_scoped limit and an Antigravity group each get their own.
+    var scope: String
+    /// The picker's label for `scope`: a model's display name, a surface, a group's short title,
+    /// or "All models" / "Extra usage" for the families that have no narrower name.
+    var scopeName: String
 
     /// Nil for a limit without a percentage; there is nothing to follow then.
     static func claude(_ limit: UsageResponse.Limit) -> QuotaReading? {
         guard let percent = limit.percent else { return nil }
+        let model = limit.scope?.model?.displayName
+        let surface = limit.scope?.surface
         return QuotaReading(id: "claude|\(limit.id)", product: "Claude Code", name: limit.title,
                             window: limit.kind == "session" ? .fiveHour : .weekly,
-                            percent: percent, resetsAt: limit.resetsAt)
+                            percent: percent, resetsAt: limit.resetsAt,
+                            scope: "claude|\(model ?? "")|\(surface ?? "")",
+                            scopeName: model ?? surface ?? "All models")
     }
 
     /// Nil when the account has no extra usage, or the endpoint gave no figure to follow.
     static func extraUsage(_ extra: UsageResponse.ExtraUsage) -> QuotaReading? {
         guard extra.isActive, let percent = extra.percent else { return nil }
         return QuotaReading(id: "claude|extra_usage", product: "Claude Code", name: "Extra usage",
-                            window: .monthly, percent: percent, resetsAt: nil)
+                            window: .monthly, percent: percent, resetsAt: nil,
+                            scope: "claude|extra_usage", scopeName: "Extra usage")
     }
 
     static func antigravity(group: AntigravityUsage.Group, bucket: AntigravityUsage.Bucket) -> QuotaReading {
         QuotaReading(id: "antigravity|\(group.id)|\(bucket.id)", product: "Antigravity",
                      name: bucket.rowTitle(in: group),
                      window: bucket.window == "5h" ? .fiveHour : .weekly,
-                     percent: bucket.percentUsed, resetsAt: bucket.resetsAt)
+                     percent: bucket.percentUsed, resetsAt: bucket.resetsAt,
+                     scope: "antigravity|\(group.id)", scopeName: group.shortTitle)
     }
 }
 

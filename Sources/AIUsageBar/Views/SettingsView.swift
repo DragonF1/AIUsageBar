@@ -29,10 +29,14 @@ struct SettingsView: View {
     }
 
     var monitor: QuotaMonitor
+    var usage: UsageStore
+    var antigravity: AntigravityStore
     @State private var pane: Pane
 
-    init(monitor: QuotaMonitor, pane: Pane = .general) {
+    init(monitor: QuotaMonitor, usage: UsageStore, antigravity: AntigravityStore, pane: Pane = .general) {
         self.monitor = monitor
+        self.usage = usage
+        self.antigravity = antigravity
         _pane = State(initialValue: pane)
     }
 
@@ -55,7 +59,7 @@ struct SettingsView: View {
                 case .general:
                     GeneralSettingsView(monitor: monitor)
                 case .menuBar:
-                    MenuBarFormatSection()
+                    MenuBarFormatSection(usage: usage, antigravity: antigravity)
                 case .colours:
                     ColorScaleSettingsView()
                 }

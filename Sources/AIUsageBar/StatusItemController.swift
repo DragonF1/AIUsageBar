@@ -33,7 +33,7 @@ final class StatusItemController: NSObject {
         sessionsWindow = .sessions(tokens: tokens)
         costWindow = .cost(ledger: tokens, autosaveName: "CostWindow")
         antigravityCostWindow = .cost(ledger: antigravityTokens, autosaveName: "AntigravityCostWindow")
-        settingsWindow = .settings(monitor: monitor)
+        settingsWindow = .settings(monitor: monitor, usage: store, antigravity: antigravity)
         super.init()
 
         popover.behavior = .transient
@@ -94,12 +94,15 @@ final class StatusItemController: NSObject {
                                            antigravityTokens: antigravityTokens, now: Date(),
                                            showRemaining: Preferences.showRemaining,
                                            antigravityOther: Preferences.antigravityMenuBarOther)
-        // The rules list wins first, in list order; the plain template field is what it always was.
-        let format = MenuBarRules.format(for: values, rules: Preferences.menuBarRules,
-                                         fallback: Preferences.menuBarFormat, scale: scale)
+        // The rules list wins first, in list order: a limit rule fires no matter which tab is
+        // showing, a window rule stays tab-relative. `resolve` also copies in the percent and
+        // reset the winning rule tested, so its template's {value}/{reset} have something to
+        // read; the plain template field is what it always was when nothing matches.
+        let (format, resolvedValues) = MenuBarRules.resolve(for: values, rules: Preferences.menuBarRules,
+                                                             fallback: Preferences.menuBarFormat, scale: scale)
         let title = MenuBarTitle(tab: tab, isStale: tab == .claude ? store.isStale : antigravity.isStale,
                                  metric: Preferences.menuBarMetric, scale: scale,
-                                 format: format, values: values)
+                                 format: format, values: resolvedValues)
         button.attributedTitle = title.attributedText
         button.image = title.image
         button.imagePosition = .imageLeading

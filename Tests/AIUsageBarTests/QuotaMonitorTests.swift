@@ -16,7 +16,7 @@ private func reading(_ percent: Double, id: String = "claude|session||", window:
                      resetsAt: Date? = hours(2)) -> QuotaReading
 {
     QuotaReading(id: id, product: "Claude Code", name: window == .fiveHour ? "All models 5h" : "All models weekly",
-                 window: window, percent: percent, resetsAt: resetsAt)
+                 window: window, percent: percent, resetsAt: resetsAt, scope: "claude||", scopeName: "All models")
 }
 
 /// A weekly reading: minutes between polls never reach the weekly pace span, so only the thresholds speak.
@@ -38,6 +38,26 @@ final class QuotaReadingTests: XCTestCase {
         XCTAssertEqual(readings[0].resetsAt, usage.fiveHour?.resetsAt)
     }
 
+    /// The session and weekly_all limits share no model or surface, so they share one scope: a
+    /// rule that targets it reads whichever window the rule itself picks. Fable's weekly_scoped
+    /// limit is its own scope, named after the model.
+    func testClaudeReadingsShareScopeAcrossTheirWindowsAndNameTheModelOrSurface() throws {
+        let usage = try UsageClient.decoder.decode(UsageResponse.self, from: sampleUsage)
+        let readings = usage.readings
+        XCTAssertEqual(readings.map(\.scope), ["claude||", "claude||", "claude|Fable|"])
+        XCTAssertEqual(readings.map(\.scopeName), ["All models", "All models", "Fable"])
+    }
+
+    /// A weekly_scoped limit can carry a surface instead of a model; the surface names the scope
+    /// the same way a model would.
+    func testClaudeScopeNameFallsBackToTheSurfaceWhenThereIsNoModel() throws {
+        let limit = UsageResponse.Limit(kind: "weekly_scoped", percent: 12,
+                                        scope: UsageResponse.Limit.Scope(model: nil, surface: "cli"))
+        let reading = try XCTUnwrap(QuotaReading.claude(limit))
+        XCTAssertEqual(reading.scope, "claude||cli")
+        XCTAssertEqual(reading.scopeName, "cli")
+    }
+
     func testLimitWithoutPercentIsSkipped() {
         XCTAssertNil(QuotaReading.claude(UsageResponse.Limit(kind: "session")))
     }
@@ -57,6 +77,8 @@ final class QuotaReadingTests: XCTestCase {
         XCTAssertEqual(readings[3].window, .monthly)
         XCTAssertEqual(readings[3].percent, 24.8)
         XCTAssertNil(readings[3].resetsAt)
+        XCTAssertEqual(readings[3].scope, "claude|extra_usage")
+        XCTAssertEqual(readings[3].scopeName, "Extra usage")
     }
 
     func testExtraUsageTextAndPercent() {
@@ -79,7 +101,8 @@ final class QuotaReadingTests: XCTestCase {
         let monitor = QuotaMonitor(notifier: notifier, cacheURL: nil)
         monitor.isEnabled = { true }
         let extra = QuotaReading(id: "claude|extra_usage", product: "Claude Code", name: "Extra usage",
-                                 window: .monthly, percent: 81, resetsAt: nil)
+                                 window: .monthly, percent: 81, resetsAt: nil,
+                                 scope: "claude|extra_usage", scopeName: "Extra usage")
         monitor.observe([extra], now: t0)
         XCTAssertEqual(notifier.posted.map(\.title), ["Claude Code: Extra usage at 81%"])
         XCTAssertNil(monitor.paceLine(for: extra.id, window: .monthly, now: minutes(30)), "no reset time, no pace")
@@ -94,6 +117,16 @@ final class QuotaReadingTests: XCTestCase {
         XCTAssertEqual(readings.map(\.window), [.fiveHour, .weekly, .fiveHour, .weekly])
         XCTAssertEqual(readings[1].percent, 51.5)
         XCTAssertEqual(readings[1].product, "Antigravity")
+    }
+
+    /// The Gemini group's 5-hour and weekly buckets share one scope keyed off the group, named
+    /// after the group's short title, so a rule targeting it can pick either window on its own.
+    func testAntigravityReadingsShareScopePerGroupNamedByShortTitle() throws {
+        let summary = try UsageClient.decoder.decode(AntigravityQuotaSummary.self, from: antigravityFixture)
+        let readings = AntigravityUsage(summary: summary).readings
+        XCTAssertEqual(readings.map(\.scope), ["antigravity|Gemini Models", "antigravity|Gemini Models",
+                                               "antigravity|Claude and GPT models", "antigravity|Claude and GPT models"])
+        XCTAssertEqual(readings.map(\.scopeName), ["Gemini", "Gemini", "Claude and GPT", "Claude and GPT"])
     }
 }
 

@@ -63,7 +63,37 @@ final class MenuBarTemplateTests: XCTestCase {
         XCTAssertEqual(MenuBarTemplate.render("{cost}", values: withoutCost), "–")
     }
 
-    func testTokensListsExactlyTheFiveSubstitutions() {
-        XCTAssertEqual(MenuBarTemplate.tokens, ["{5h}", "{week}", "{reset5h}", "{resetWeek}", "{cost}"])
+    func testTokensListsExactlyTheSevenSubstitutions() {
+        XCTAssertEqual(MenuBarTemplate.tokens, ["{5h}", "{week}", "{reset5h}", "{resetWeek}", "{cost}", "{value}", "{reset}"])
+    }
+
+    func testValueAndResetTokensReadTheMatchedFields() {
+        let values = MenuBarValues(sessionPercent: nil, weeklyPercent: nil, sessionResetsAt: nil, weeklyResetsAt: nil,
+                                    todayCost: nil, now: now, showRemaining: false, readings: [],
+                                    matchedPercent: 62, matchedResetsAt: now.addingTimeInterval(2 * 3600))
+        XCTAssertEqual(MenuBarTemplate.render("{value} {reset}", values: values), "62% 2h")
+    }
+
+    func testValueAndResetTokensShowRemainingWhenAsked() {
+        let values = MenuBarValues(sessionPercent: nil, weeklyPercent: nil, sessionResetsAt: nil, weeklyResetsAt: nil,
+                                    todayCost: nil, now: now, showRemaining: true, matchedPercent: 62)
+        XCTAssertEqual(MenuBarTemplate.render("{value}", values: values), "38%")
+    }
+
+    func testValueAndResetTokensAreADashWhenNothingMatched() {
+        let values = MenuBarValues(sessionPercent: nil, weeklyPercent: nil, sessionResetsAt: nil, weeklyResetsAt: nil,
+                                    todayCost: nil, now: now, showRemaining: false)
+        XCTAssertEqual(MenuBarTemplate.render("{value} {reset}", values: values), "– –")
+    }
+
+    /// `{reset}` must not eat part of `{reset5h}`/`{resetWeek}` when all three sit in the same
+    /// template: the closing brace on each makes them distinct substrings of one another.
+    func testResetTokenDoesNotClobberReset5hOrResetWeek() {
+        let values = MenuBarValues(sessionPercent: nil, weeklyPercent: nil,
+                                    sessionResetsAt: now.addingTimeInterval(130 * 60),
+                                    weeklyResetsAt: now.addingTimeInterval(3 * 86400 + 4 * 3600),
+                                    todayCost: nil, now: now, showRemaining: false,
+                                    matchedResetsAt: now.addingTimeInterval(3600))
+        XCTAssertEqual(MenuBarTemplate.render("{reset5h} {resetWeek} {reset}", values: values), "2h 10m 3d 4h 1h")
     }
 }

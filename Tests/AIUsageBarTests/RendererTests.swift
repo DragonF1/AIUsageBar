@@ -198,4 +198,36 @@ final class RendererTests: XCTestCase {
         XCTAssertEqual(claudeOn.sessionPercent, usage.sessionPercent)
         XCTAssertEqual(claudeOn.weeklyPercent, usage.weeklyPercent)
     }
+
+    /// The readings list is global: a limit rule needs both products' rows regardless of which
+    /// tab's two headline numbers the rest of `MenuBarValues` carries.
+    @MainActor func testMenuBarValuesCurrentIncludesReadingsFromBothStoresOnTheClaudeTab() throws {
+        let usage = UsageStore(cacheURL: nil)
+        usage.adopt(claudeUsage(session: 34, weekly: 58), plan: nil, at: now)
+        let summary = try UsageClient.decoder.decode(AntigravityQuotaSummary.self, from: antigravityFixture)
+        let antigravity = AntigravityStore(cacheURL: nil)
+        antigravity.adopt(AntigravityUsage(summary: summary, tier: "Google AI Pro"))
+
+        let values = MenuBarValues.current(tab: .claude, usage: usage, antigravity: antigravity,
+                                           tokens: TokenStore(), antigravityTokens: AntigravityTokenStore(),
+                                           now: now, showRemaining: false, antigravityOther: false)
+        let ids = Set(values.readings.map(\.id))
+        XCTAssertTrue(ids.contains("claude|session||"))
+        XCTAssertTrue(ids.contains(where: { $0.hasPrefix("antigravity|") }))
+    }
+
+    @MainActor func testMenuBarValuesCurrentIncludesReadingsFromBothStoresOnTheAntigravityTab() throws {
+        let usage = UsageStore(cacheURL: nil)
+        usage.adopt(claudeUsage(session: 34, weekly: 58), plan: nil, at: now)
+        let summary = try UsageClient.decoder.decode(AntigravityQuotaSummary.self, from: antigravityFixture)
+        let antigravity = AntigravityStore(cacheURL: nil)
+        antigravity.adopt(AntigravityUsage(summary: summary, tier: "Google AI Pro"))
+
+        let values = MenuBarValues.current(tab: .antigravity, usage: usage, antigravity: antigravity,
+                                           tokens: TokenStore(), antigravityTokens: AntigravityTokenStore(),
+                                           now: now, showRemaining: false, antigravityOther: false)
+        let ids = Set(values.readings.map(\.id))
+        XCTAssertTrue(ids.contains("claude|session||"))
+        XCTAssertTrue(ids.contains(where: { $0.hasPrefix("antigravity|") }))
+    }
 }

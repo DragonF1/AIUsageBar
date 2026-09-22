@@ -21,9 +21,9 @@ final class SettingsWindowController {
     /// Menu bar and Colours panes. A new autosave name ("Settings", not the old
     /// "ColorScaleSettings") because that frame was sized for the single-section "Appearance…"
     /// window and would be too small now the switches moved in beside it.
-    static func settings(monitor: QuotaMonitor) -> SettingsWindowController {
+    static func settings(monitor: QuotaMonitor, usage: UsageStore, antigravity: AntigravityStore) -> SettingsWindowController {
         SettingsWindowController(title: "Settings", autosaveName: "Settings") {
-            AnyView(SettingsView(monitor: monitor))
+            AnyView(SettingsView(monitor: monitor, usage: usage, antigravity: antigravity))
         }
     }
 
