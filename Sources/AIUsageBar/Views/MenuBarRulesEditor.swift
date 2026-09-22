@@ -88,10 +88,10 @@ struct MenuBarRulesEditor: View {
                     .pickerStyle(.menu).labelsHidden().fixedSize()
                 }
             }
-            // The condition line above is already five controls wide ("Weekly", "at or over",
-            // "colour band" and a band name can all be showing at once); the reorder/remove
-            // buttons live here instead, trailing the template field, so the window does not
-            // have to grow past what the settings window's width allows.
+            // The condition line above is already four controls wide ("Weekly", "greater than or
+            // equal to", "colour band" and a band name can all be showing at once); the
+            // reorder/remove buttons live here instead, trailing the template field, so the window
+            // does not have to grow past what the settings window's width allows.
             HStack(spacing: 6) {
                 TextField("Template", text: rule.format)
                     .textFieldStyle(.roundedBorder)

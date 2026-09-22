@@ -12,14 +12,20 @@ enum MenuBarWindow: String, Codable, CaseIterable {
     }
 }
 
-/// How a rule's condition tests its number against its threshold.
+/// How a rule's condition tests its number against its threshold. Declared in picker order
+/// (`under` first, `over` last) since the editor's `Picker` walks `allCases`; the raw values of
+/// `atLeast` and `under` predate the other three cases and are persisted in UserDefaults, so they
+/// must never change even though their titles have.
 enum MenuBarComparison: String, Codable, CaseIterable {
-    case atLeast, under
+    case under, atMost, equal, atLeast, over
 
     var title: String {
         switch self {
-        case .atLeast: return "at or over"
-        case .under: return "under"
+        case .under: return "less than"
+        case .atMost: return "less than or equal to"
+        case .equal: return "equal to"
+        case .atLeast: return "greater than or equal to"
+        case .over: return "greater than"
         }
     }
 }
@@ -31,7 +37,8 @@ enum MenuBarThreshold: Codable, Equatable {
     case band(UsageColor.Level)
 }
 
-/// "5-hour at or over 80%": the window, the comparison and the threshold a rule watches for.
+/// "5-hour greater than or equal to 80%": the window, the comparison and the threshold a rule
+/// watches for.
 /// Pure and stateless; `matches` is the only place a live number ever touches this type.
 struct MenuBarCondition: Codable, Equatable {
     var window: MenuBarWindow
@@ -50,10 +57,24 @@ struct MenuBarCondition: Codable, Equatable {
         guard let percent else { return false }
         switch threshold {
         case .percent(let n):
-            return comparison == .atLeast ? percent >= n : percent < n
+            switch comparison {
+            case .under: return percent < n
+            case .atMost: return percent <= n
+            // Rounded to match what the menu bar itself displays (`PercentText`), so "equal to
+            // 3" fires on the same numbers a user would read as "3%".
+            case .equal: return percent.rounded() == n
+            case .atLeast: return percent >= n
+            case .over: return percent > n
+            }
         case .band(let band):
             let level = scale.level(for: percent)
-            return comparison == .atLeast ? level >= band : level < band
+            switch comparison {
+            case .under: return level < band
+            case .atMost: return level <= band
+            case .equal: return level == band
+            case .atLeast: return level >= band
+            case .over: return level > band
+            }
         }
     }
 }
