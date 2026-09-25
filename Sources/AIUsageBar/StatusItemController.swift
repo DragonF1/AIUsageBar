@@ -204,6 +204,20 @@ final class StatusItemController: NSObject {
         button.image = title.image
         button.imagePosition = .imageLeading
         button.toolTip = tooltip(for: title.tab)
+        if popover.isShown {
+            repositionPopover()
+        }
+    }
+
+    /// Re-anchors the popover so its arrow and window stay centered under the status item
+    /// whenever the button's title, icon or length changes (e.g. switching tabs).
+    private func repositionPopover() {
+        guard popover.isShown, let button = item.button else { return }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.popover.isShown, let button = self.item.button else { return }
+            self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        }
     }
 
     private func computeTitle() -> MenuBarTitle {
