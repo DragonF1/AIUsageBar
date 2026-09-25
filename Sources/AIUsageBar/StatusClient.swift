@@ -200,7 +200,7 @@ final class StatusStore {
 
     func start() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: UsageStore.pollInterval, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: UsageStore.statusPollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refresh() }
         }
         Task { await refresh() }

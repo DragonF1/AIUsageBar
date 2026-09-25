@@ -493,6 +493,23 @@ final class PreferenceModelTests: XCTestCase {
         XCTAssertNil(MenuBarMetric(rawValue: "bogus"))
     }
 
+    func testRefreshIntervalRoundTripsThroughItsRawValue() {
+        for interval in RefreshInterval.allCases {
+            XCTAssertEqual(RefreshInterval(rawValue: interval.rawValue), interval)
+        }
+        XCTAssertNil(RefreshInterval(rawValue: "bogus"))
+    }
+
+    func testRefreshIntervalDefaultsToOneMinuteWhenUnsetOrGarbage() {
+        withScratchDefaults { defaults in
+            XCTAssertEqual(Preferences.refreshInterval, .minute1, "a fresh suite has nothing stored")
+            defaults.set("not-a-real-interval", forKey: Preferences.Key.refreshInterval)
+            XCTAssertEqual(Preferences.refreshInterval, .minute1, "garbage data falls back to the default")
+            Preferences.refreshInterval = .seconds30
+            XCTAssertEqual(Preferences.refreshInterval, .seconds30)
+        }
+    }
+
     func testThresholdsFromConfig() throws {
         func settings(_ json: String) throws -> AppConfig.Settings {
             let url = FileManager.default.temporaryDirectory.appendingPathComponent("config-\(UUID().uuidString).json")

@@ -20,6 +20,8 @@ final class AntigravityStore {
     var monitor: QuotaMonitor?
 
     private var timer: Timer?
+    private var scheduledInterval: TimeInterval?
+    private var defaultsObserver: NSObjectProtocol?
     private var backoffUntil: Date?
     private var inFlight = false
 
@@ -37,11 +39,26 @@ final class AntigravityStore {
     // MARK: - scheduling
 
     func start() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: UsageStore.pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.refresh(reason: "timer") }
+        scheduleTimer()
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.rescheduleIfNeeded() }
         }
         Task { await refresh(reason: "launch") }
+    }
+
+    /// Rebuilds the repeating timer against `Preferences.refreshInterval`. Called at launch and
+    /// again whenever the setting changes, so a new interval takes effect without a relaunch.
+    private func scheduleTimer() {
+        let interval = Preferences.refreshInterval.seconds
+        timer?.invalidate()
+        scheduledInterval = interval
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.refresh(reason: "timer") }
+        }
+    }
+
+    private func rescheduleIfNeeded() {
+        if scheduledInterval != Preferences.refreshInterval.seconds { scheduleTimer() }
     }
 
     func refreshIfStale() {

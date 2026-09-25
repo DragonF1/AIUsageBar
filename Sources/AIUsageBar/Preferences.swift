@@ -16,6 +16,7 @@ enum Preferences {
         static let menuBarRules = "menuBarRules"
         static let showPace = "showPace"
         static let antigravityMenuBarOther = "antigravityMenuBarOther"
+        static let refreshInterval = "refreshInterval"
     }
 
     static var defaults: UserDefaults = .standard
@@ -92,6 +93,13 @@ enum Preferences {
         get { defaults.object(forKey: Key.antigravityMenuBarOther) as? Bool ?? false }
         set { defaults.set(newValue, forKey: Key.antigravityMenuBarOther) }
     }
+
+    /// How often the usage stores poll in the background. Unknown or missing data falls back
+    /// to `.minute1`, which keeps the menu bar closer to live than the original fixed 5 minutes.
+    static var refreshInterval: RefreshInterval {
+        get { RefreshInterval(rawValue: defaults.string(forKey: Key.refreshInterval) ?? "") ?? .minute1 }
+        set { defaults.set(newValue.rawValue, forKey: Key.refreshInterval) }
+    }
 }
 
 /// What tints the menu bar icon. `auto` is the original rule: the 5-hour window, unless the
@@ -109,6 +117,33 @@ enum MenuBarMetric: String, CaseIterable {
         case .auto: return "Auto (5-hour, weekly from \(Int(scale.highCutoff.rounded()))%)"
         case .session: return "5-hour window"
         case .weekly: return "Weekly window"
+        }
+    }
+}
+
+/// How often `UsageStore` and `AntigravityStore` poll in the background. The status feeds and
+/// the token stores are unaffected: they keep their own fixed poll (see `UsageStore.statusPollInterval`).
+enum RefreshInterval: String, CaseIterable {
+    case seconds30
+    case minute1
+    case minute2
+    case minute5
+
+    var seconds: TimeInterval {
+        switch self {
+        case .seconds30: return 30
+        case .minute1: return 60
+        case .minute2: return 120
+        case .minute5: return 300
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .seconds30: return "30 seconds"
+        case .minute1: return "1 minute"
+        case .minute2: return "2 minutes"
+        case .minute5: return "5 minutes"
         }
     }
 }

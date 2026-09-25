@@ -17,7 +17,7 @@ final class AntigravityTokenStore: TokenLedger {
 
     func start() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: UsageStore.pollInterval, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: UsageStore.statusPollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.refresh(reason: "timer") }
         }
         // The first scan decodes every recent conversation once; keep it off the interactive lanes.

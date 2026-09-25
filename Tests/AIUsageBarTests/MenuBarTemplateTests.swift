@@ -42,6 +42,15 @@ final class MenuBarTemplateTests: XCTestCase {
         XCTAssertEqual(MenuBarTemplate.render("{reset5h} {resetWeek}", values: values), "2h 10m 3d 4h")
     }
 
+    func testResetTokensShowSecondsUnderAMinute() {
+        let values = MenuBarValues(sessionPercent: nil, weeklyPercent: nil,
+                                    sessionResetsAt: now.addingTimeInterval(45),
+                                    weeklyResetsAt: nil,
+                                    todayCost: nil, now: now, showRemaining: false, readings: [],
+                                    matchedResetsAt: now.addingTimeInterval(5))
+        XCTAssertEqual(MenuBarTemplate.render("{reset5h} {reset}", values: values), "45s 5s")
+    }
+
     func testResetTokensAreADashWhenMissingOrPast() {
         let missing = MenuBarValues(sessionPercent: nil, weeklyPercent: nil, sessionResetsAt: nil, weeklyResetsAt: nil,
                                      todayCost: nil, now: now, showRemaining: false)

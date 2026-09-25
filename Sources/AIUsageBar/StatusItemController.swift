@@ -19,6 +19,22 @@ final class StatusItemController: NSObject {
     private var observation: Task<Void, Never>?
     private var outsideClickMonitor: Any?
 
+    /// The last text `render()` drew, so the 1s ticker below can skip a redraw when nothing
+    /// actually changed (a minutes-only countdown between its own minute boundaries).
+    private var lastRenderedText: String?
+    /// The template and numbers behind that last render, so the ticker can re-run just the
+    /// string substitution against a fresh clock instead of re-summing both ledgers and
+    /// re-reading the rules every second.
+    private var lastFormat: String?
+    private var lastValues: MenuBarValues?
+    private var tickTimer: Timer?
+
+    private var claudeActivityScheduler: ActivityRefreshScheduler?
+    private var antigravityActivityScheduler: ActivityRefreshScheduler?
+    private var claudeActivityWatcher: ActivityWatcher?
+    private var antigravityActivityWatcher: ActivityWatcher?
+    private var activityPumpTimer: Timer?
+
     init(store: UsageStore, antigravity: AntigravityStore, status: StatusStore, antigravityStatus: StatusStore,
          tokens: TokenStore, antigravityTokens: AntigravityTokenStore, monitor: QuotaMonitor)
     {
@@ -30,6 +46,8 @@ final class StatusItemController: NSObject {
         self.antigravityTokens = antigravityTokens
         self.monitor = monitor
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        // A fixed autosave name makes macOS keep the spot the icon is Cmd-dragged to across relaunches.
+        item.autosaveName = "AIUsageBarStatusItem"
         sessionsWindow = .sessions(tokens: tokens)
         costWindow = .cost(ledger: tokens, autosaveName: "CostWindow")
         antigravityCostWindow = .cost(ledger: antigravityTokens, autosaveName: "AntigravityCostWindow")
@@ -60,7 +78,101 @@ final class StatusItemController: NSObject {
         // The tab picker and the menu's tint switch write UserDefaults; the menu bar follows both.
         NotificationCenter.default.addObserver(self, selector: #selector(render),
                                                name: UserDefaults.didChangeNotification, object: nil)
+        // A resumed Mac has usually missed at least one poll; catch straight back up.
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake),
+                                                           name: NSWorkspace.didWakeNotification, object: nil)
         render()
+        startTicker()
+        setupActivityWatchers()
+    }
+
+    // `AppDelegate` owns the one controller for the whole process, so this never runs today. If
+    // that ever changes, release it from the main thread: the FSEvents streams and timers torn
+    // down here were scheduled on the main queue and must be stopped there, and a Swift 5 mode
+    // `deinit` is not main-actor isolated by itself.
+    deinit {
+        tickTimer?.invalidate()
+        activityPumpTimer?.invalidate()
+        claudeActivityWatcher?.stop()
+        antigravityActivityWatcher?.stop()
+    }
+
+    @objc private func didWake() {
+        Task {
+            await store.refresh(reason: "wake")
+            await antigravity.refresh(reason: "wake")
+        }
+        status.refreshIfStale()
+        antigravityStatus.refreshIfStale()
+        tokens.refreshIfStale()
+        antigravityTokens.refreshIfStale()
+    }
+
+    // MARK: - seconds ticker
+
+    /// A 1s heartbeat so a reset countdown under a minute keeps counting down live; `tick()`
+    /// only actually redraws when the text changed, so a minutes-only countdown still redraws
+    /// once a minute, not once a second.
+    private func startTicker() {
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+        timer.tolerance = 0.2
+        // `.common` keeps it ticking while the right-click menu is open or the icon is being
+        // Cmd-dragged; a default-mode timer pauses for the whole interaction.
+        RunLoop.main.add(timer, forMode: .common)
+        tickTimer = timer
+    }
+
+    /// Only the clock moves between two ticks (every other input to the title re-renders through
+    /// `observeStore` or the defaults observer), so re-substitute the last template against
+    /// `Date()` and redraw only when that text differs from what is on screen.
+    private func tick() {
+        guard let format = lastFormat, var values = lastValues else { return }
+        values.now = Date()
+        guard MenuBarTemplate.render(format, values: values) != lastRenderedText else { return }
+        render()
+    }
+
+    // MARK: - activity-triggered refresh
+
+    /// Watches the Claude Code transcript root and the Antigravity conversation roots, and
+    /// refreshes the matching stores a short quiet period after something changes under them
+    /// (see `ActivityRefreshScheduler`). A root that does not exist on this Mac is skipped.
+    private func setupActivityWatchers() {
+        let claudeScheduler = ActivityRefreshScheduler(initialLastFetchAt: Date()) { [weak self] in
+            Task { @MainActor in
+                await self?.tokens.refresh(reason: "activity")
+                await self?.store.refresh(reason: "activity")
+            }
+        }
+        claudeActivityScheduler = claudeScheduler
+        claudeActivityWatcher = ActivityWatcher.forRoots([TokenScanner.defaultRoot]) { [weak claudeScheduler] in
+            claudeScheduler?.activityDetected()
+        }
+
+        let antigravityScheduler = ActivityRefreshScheduler(initialLastFetchAt: Date()) { [weak self] in
+            Task { @MainActor in
+                await self?.antigravityTokens.refresh(reason: "activity")
+                await self?.antigravity.refresh(reason: "activity")
+            }
+        }
+        antigravityActivityScheduler = antigravityScheduler
+        antigravityActivityWatcher = ActivityWatcher.forRoots(AntigravityTokenScanner.defaultRoots) { [weak antigravityScheduler] in
+            antigravityScheduler?.activityDetected()
+        }
+
+        // The schedulers are pure and polled rather than self-timed, so one cheap timer drives
+        // both; a real fire happens no more often than `ActivityRefreshScheduler.minimumFetchInterval`.
+        let pump = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.claudeActivityScheduler?.checkAndFire()
+                self?.antigravityActivityScheduler?.checkAndFire()
+            }
+        }
+        pump.tolerance = 0.1
+        RunLoop.main.add(pump, forMode: .common)
+        activityPumpTimer = pump
     }
 
     private func observeStore() {
@@ -73,6 +185,8 @@ final class StatusItemController: NSObject {
                         _ = self.store.state
                         _ = self.antigravity.usage
                         _ = self.antigravity.state
+                        _ = self.tokens.records
+                        _ = self.antigravityTokens.records
                     } onChange: {
                         cont.resume()
                     }
@@ -84,6 +198,15 @@ final class StatusItemController: NSObject {
 
     @objc private func render() {
         guard let button = item.button else { return }
+        let title = computeTitle()
+        lastRenderedText = title.text
+        button.attributedTitle = title.attributedText
+        button.image = title.image
+        button.imagePosition = .imageLeading
+        button.toolTip = tooltip(for: title.tab)
+    }
+
+    private func computeTitle() -> MenuBarTitle {
         // Claude tab: "8% / 32%" = 5-hour session / weekly all models.
         // Antigravity tab: "8% / 52%" = Gemini 5-hour / Gemini weekly by default; the "Antigravity
         // reads Claude and GPT limits" switch in Settings swaps in that group's numbers instead.
@@ -100,13 +223,11 @@ final class StatusItemController: NSObject {
         // read; the plain template field is what it always was when nothing matches.
         let (format, resolvedValues) = MenuBarRules.resolve(for: values, rules: Preferences.menuBarRules,
                                                              fallback: Preferences.menuBarFormat, scale: scale)
-        let title = MenuBarTitle(tab: tab, isStale: tab == .claude ? store.isStale : antigravity.isStale,
-                                 metric: Preferences.menuBarMetric, scale: scale,
-                                 format: format, values: resolvedValues)
-        button.attributedTitle = title.attributedText
-        button.image = title.image
-        button.imagePosition = .imageLeading
-        button.toolTip = tooltip(for: tab)
+        lastFormat = format
+        lastValues = resolvedValues
+        return MenuBarTitle(tab: tab, isStale: tab == .claude ? store.isStale : antigravity.isStale,
+                            metric: Preferences.menuBarMetric, scale: scale,
+                            format: format, values: resolvedValues)
     }
 
     private func tooltip(for tab: UsageTab) -> String {

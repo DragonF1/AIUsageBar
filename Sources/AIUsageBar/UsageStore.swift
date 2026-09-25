@@ -16,8 +16,10 @@ final class UsageStore {
     private(set) var state: State = .loading
     private(set) var subscriptionType: String?
 
-    static let pollInterval: TimeInterval = 5 * 60
-    static let popoverRefetchAge: TimeInterval = 60
+    /// The fixed poll for the status feeds and the token stores, which have no user-facing
+    /// setting of their own. `Preferences.refreshInterval` governs the usage stores instead.
+    static let statusPollInterval: TimeInterval = 5 * 60
+    static let popoverRefetchAge: TimeInterval = 15
 
     var client = UsageClient()
     var refresher = OAuthRefresher()
@@ -26,6 +28,8 @@ final class UsageStore {
     var monitor: QuotaMonitor?
 
     private var timer: Timer?
+    private var scheduledInterval: TimeInterval?
+    private var defaultsObserver: NSObjectProtocol?
     private var backoffUntil: Date?
     private var inFlight = false
     /// nil disables the cache; tests and the screenshot renderer pass nil so they never touch the app's real file.
@@ -39,11 +43,26 @@ final class UsageStore {
     // MARK: - scheduling
 
     func start() {
-        timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.refresh(reason: "timer") }
+        scheduleTimer()
+        defaultsObserver = NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.rescheduleIfNeeded() }
         }
         Task { await refresh(reason: "launch") }
+    }
+
+    /// Rebuilds the repeating timer against `Preferences.refreshInterval`. Called at launch and
+    /// again whenever the setting changes, so a new interval takes effect without a relaunch.
+    private func scheduleTimer() {
+        let interval = Preferences.refreshInterval.seconds
+        timer?.invalidate()
+        scheduledInterval = interval
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.refresh(reason: "timer") }
+        }
+    }
+
+    private func rescheduleIfNeeded() {
+        if scheduledInterval != Preferences.refreshInterval.seconds { scheduleTimer() }
     }
 
     func refreshIfStale() {
@@ -267,8 +286,12 @@ enum ResetText {
         }
     }
 
-    /// "3d 4h", "5d", "2h 10m", "45m", "1h". Minutes round up so a future reset never reads 0m.
+    /// "3d 4h", "5d", "2h 10m", "45m", "1h", and under a minute "45s", "1s". Seconds and minutes
+    /// both round up, so a reset 59.2s out reads "1m" (not "59s") and one 0.4s out never reads "0m".
     static func remaining(_ interval: TimeInterval) -> String {
+        let wholeSeconds = Int(interval.rounded(.up))
+        if wholeSeconds <= 0 { return "0s" }
+        if wholeSeconds < 60 { return "\(wholeSeconds)s" }
         let minutes = max(1, Int((interval / 60).rounded(.up)))
         let h = minutes / 60, m = minutes % 60
         if h >= 24 {

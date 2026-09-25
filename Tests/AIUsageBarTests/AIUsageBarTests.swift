@@ -83,9 +83,17 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(ResetText.remaining(130 * 60), "2h 10m")
         XCTAssertEqual(ResetText.remaining(45 * 60), "45m")
         XCTAssertEqual(ResetText.remaining(60 * 60), "1h")
-        XCTAssertEqual(ResetText.remaining(30), "1m")
         XCTAssertEqual(ResetText.remaining(3 * 86400 + 4 * 3600), "3d 4h")
         XCTAssertEqual(ResetText.remaining(5 * 86400), "5d")
+        // Under a minute: whole seconds, rounded up, with an "s" suffix.
+        XCTAssertEqual(ResetText.remaining(30), "30s")
+        XCTAssertEqual(ResetText.remaining(1), "1s")
+        XCTAssertEqual(ResetText.remaining(0.4), "1s")
+        XCTAssertEqual(ResetText.remaining(0), "0s")
+        XCTAssertEqual(ResetText.remaining(-5), "0s")
+        XCTAssertEqual(ResetText.remaining(59), "59s")
+        // 59.2s rounds up to a whole 60s, which crosses into the minute path, not "60s".
+        XCTAssertEqual(ResetText.remaining(59.2), "1m")
         XCTAssertEqual(ResetText.ordinal(2), "2nd")
         XCTAssertEqual(ResetText.ordinal(3), "3rd")
         XCTAssertEqual(ResetText.ordinal(11), "11th")

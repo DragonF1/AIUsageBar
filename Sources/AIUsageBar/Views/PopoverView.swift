@@ -24,7 +24,9 @@ struct PopoverView: View {
     @State private var now = Date()
     @State private var revealed = false
 
-    private let tick = Timer.publish(every: 30, on: .main, in: .common).autoconnect()
+    // 1s so a reset under a minute away counts down live; `shouldAdvanceNow` below decides
+    // whether a given tick is actually worth a state write once nothing that close is showing.
+    private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -53,7 +55,11 @@ struct PopoverView: View {
             withAnimation(.spring(duration: 0.28, bounce: 0.15)) { revealed = true }
         }
         .onDisappear { revealed = false }
-        .onReceive(tick) { now = $0 }
+        .onReceive(tick) { newNow in
+            if PopoverTicker.shouldAdvanceNow(previous: now, current: newNow, soonestReset: soonestReset) {
+                now = newNow
+            }
+        }
         // Outermost, so the background is not part of the reveal animation (opacity, scale,
         // offset above) and the popover's body matches the windows' opaque chrome.
         .background(Color(nsColor: .windowBackgroundColor))
@@ -88,6 +94,19 @@ struct PopoverView: View {
     /// The Gemini group's weekly reset, so the Antigravity week lines up with its own limit.
     private var antigravityWeeklyReset: Date? {
         antigravity.usage?.gemini?.buckets.first { $0.window == "weekly" }?.resetsAt
+    }
+
+    /// The earliest upcoming reset among the rows the current tab actually draws, so the tick
+    /// above only advances every second while one of them is close enough to show its seconds.
+    private var soonestReset: Date? {
+        let dates: [Date?]
+        switch tab {
+        case .claude:
+            dates = (store.usage?.displayLimits ?? []).map(\.resetsAt)
+        case .antigravity:
+            dates = (antigravity.usage?.groups ?? []).flatMap(\.buckets).map(\.resetsAt)
+        }
+        return dates.compactMap { $0 }.filter { $0 > now }.min()
     }
 
     private var header: some View {
@@ -266,5 +285,31 @@ struct PopoverView: View {
         .buttonStyle(.plain)
         .help("Open Settings: notifications, start at login, extra usage credits, "
               + "show remaining, pace forecast, menu bar tint, menu bar text and colours.")
+    }
+}
+
+/// The popover's `now` drives every reset countdown on screen; ticking it every second would
+/// mean a state write, and a SwiftUI re-render, once a second even when nothing visible would
+/// actually change. This is the pure decision behind that: advance every second while a reset is
+/// under a minute away, so its seconds count down live, and otherwise only when the minute rolled
+/// over, since a minutes-only countdown reads the same for the other 59 ticks either way.
+enum PopoverTicker {
+    /// Whether the popover's 1s tick should write a new `now`: every second while the soonest
+    /// reset is under a minute away (so its seconds count down live), on the tick that first
+    /// lands past that reset (so it flips to "Resetting" at once instead of sitting on "1s left"
+    /// until the minute rolls over), otherwise only when the minute changed.
+    static func shouldAdvanceNow(previous: Date, current: Date, soonestReset: Date?) -> Bool {
+        if let soonestReset {
+            if soonestReset > current, soonestReset.timeIntervalSince(current) < 60 { return true }
+            if soonestReset <= current, soonestReset > previous { return true }
+        }
+        return minuteBucket(previous) != minuteBucket(current)
+    }
+
+    /// Epoch seconds divided into whole minutes. Every real-world minute boundary, in every
+    /// time zone (even the fractional-hour ones), lands on a whole multiple of 60 UTC seconds,
+    /// so this needs no calendar to track "did the minute change".
+    private static func minuteBucket(_ date: Date) -> Int {
+        Int(date.timeIntervalSince1970 / 60)
     }
 }

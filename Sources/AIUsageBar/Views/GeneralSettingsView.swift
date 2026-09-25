@@ -13,6 +13,7 @@ struct GeneralSettingsView: View {
     @AppStorage(Preferences.Key.showRemaining, store: Preferences.defaults) private var showRemaining = false
     @AppStorage(Preferences.Key.showPace, store: Preferences.defaults) private var showPace = true
     @AppStorage(Preferences.Key.menuBarMetric, store: Preferences.defaults) private var metric: MenuBarMetric = .auto
+    @AppStorage(Preferences.Key.refreshInterval, store: Preferences.defaults) private var refreshInterval: RefreshInterval = .minute1
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -35,6 +36,17 @@ struct GeneralSettingsView: View {
                 Spacer()
                 Picker("", selection: $metric) {
                     ForEach(MenuBarMetric.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.menu)
+                .labelsHidden()
+                .fixedSize()
+            }
+
+            HStack {
+                Text("Refresh usage every")
+                Spacer()
+                Picker("", selection: $refreshInterval) {
+                    ForEach(RefreshInterval.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
