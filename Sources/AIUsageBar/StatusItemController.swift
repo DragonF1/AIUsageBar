@@ -198,20 +198,41 @@ final class StatusItemController: NSObject {
 
     @objc private func render() {
         guard let button = item.button else { return }
-        let title = computeTitle()
+        let tab = UsageTab.current
+        let otherTab: UsageTab = tab == .claude ? .antigravity : .claude
+        // Both tabs are computed on every render, not just the shown one, so the shown title can
+        // be padded out to the wider of the two (see `MenuBarWidth`); the other tab's title is
+        // measured and dropped. Only the shown tab's template feeds `tick()`.
+        let (title, format, values) = computeTitle(for: tab)
+        let (otherTitle, _, _) = computeTitle(for: otherTab)
+        lastFormat = format
+        lastValues = values
+
         lastRenderedText = title.text
-        button.attributedTitle = title.attributedText
+        let text = title.attributedText
+        let otherText = otherTitle.attributedText
+        // Recomputed on every render rather than remembered, so a template edit, a rule firing
+        // or a digit-count change on either tab takes effect on the next render, including a
+        // shrink back down once the wider text goes away.
+        let padding = MenuBarWidth.trailingPadding(
+            currentTextWidth: text.size().width, currentImageWidth: title.image.size.width,
+            otherTextWidth: otherText.size().width, otherImageWidth: otherTitle.image.size.width)
+        button.attributedTitle = MenuBarWidth.pad(text, by: padding, font: MenuBarTitle.font)
         button.image = title.image
         button.imagePosition = .imageLeading
         button.toolTip = tooltip(for: title.tab)
+        // VoiceOver reads the unpadded text: the width padding is a drawing detail.
+        button.setAccessibilityTitle(title.text.isEmpty ? title.tab.title : "\(title.tab.title) \(title.text)")
     }
 
-    private func computeTitle() -> MenuBarTitle {
+    /// Builds the title for one tab, current or not, and hands back the template and numbers it
+    /// resolved to: `render()` caches the shown tab's pair for `tick()` and measures both tabs'
+    /// titles for `MenuBarWidth`.
+    private func computeTitle(for tab: UsageTab) -> (title: MenuBarTitle, format: String, values: MenuBarValues) {
         // Claude tab: "8% / 32%" = 5-hour session / weekly all models.
         // Antigravity tab: "8% / 52%" = Gemini 5-hour / Gemini weekly by default; the "Antigravity
         // reads Claude and GPT limits" switch in Settings swaps in that group's numbers instead.
         // Either way, the group not shown still lives in the popover.
-        let tab = UsageTab.current
         let scale = Preferences.colorScale
         let values = MenuBarValues.current(tab: tab, usage: store, antigravity: antigravity, tokens: tokens,
                                            antigravityTokens: antigravityTokens, now: Date(),
@@ -223,11 +244,10 @@ final class StatusItemController: NSObject {
         // read; the plain template field is what it always was when nothing matches.
         let (format, resolvedValues) = MenuBarRules.resolve(for: values, rules: Preferences.menuBarRules,
                                                              fallback: Preferences.menuBarFormat, scale: scale)
-        lastFormat = format
-        lastValues = resolvedValues
-        return MenuBarTitle(tab: tab, isStale: tab == .claude ? store.isStale : antigravity.isStale,
-                            metric: Preferences.menuBarMetric, scale: scale,
-                            format: format, values: resolvedValues)
+        let title = MenuBarTitle(tab: tab, isStale: tab == .claude ? store.isStale : antigravity.isStale,
+                                 metric: Preferences.menuBarMetric, scale: scale,
+                                 format: format, values: resolvedValues)
+        return (title, format, resolvedValues)
     }
 
     private func tooltip(for tab: UsageTab) -> String {
@@ -425,10 +445,13 @@ struct MenuBarTitle {
         return scale.nsColor(for: tint.level)
     }
 
+    /// The menu bar text font; `MenuBarWidth` pads with the same one so the gap measures true.
+    static let font = NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium)
+
     var attributedText: NSAttributedString {
         NSAttributedString(string: text, attributes: [
             .foregroundColor: stale ? NSColor.secondaryLabelColor : NSColor.labelColor,
-            .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .medium),
+            .font: Self.font,
         ])
     }
 
