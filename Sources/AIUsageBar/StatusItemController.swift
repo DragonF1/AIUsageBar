@@ -78,6 +78,12 @@ final class StatusItemController: NSObject {
         // The tab picker and the menu's tint switch write UserDefaults; the menu bar follows both.
         NotificationCenter.default.addObserver(self, selector: #selector(render),
                                                name: UserDefaults.didChangeNotification, object: nil)
+        // WindowServer relocates NSStatusBarWindow asynchronously after title/width changes;
+        // re-anchor the popover when the status item window settles into its new position.
+        NotificationCenter.default.addObserver(self, selector: #selector(windowDidMoveOrResize(_:)),
+                                               name: NSWindow.didMoveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(windowDidMoveOrResize(_:)),
+                                               name: NSWindow.didResizeNotification, object: nil)
         // A resumed Mac has usually missed at least one poll; catch straight back up.
         NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(didWake),
                                                            name: NSWorkspace.didWakeNotification, object: nil)
@@ -209,14 +215,30 @@ final class StatusItemController: NSObject {
         }
     }
 
+    @objc private func windowDidMoveOrResize(_ notification: Notification) {
+        guard let win = notification.object as? NSWindow,
+              win === item.button?.window,
+              win.frame.origin.y > 0,
+              popover.isShown,
+              let button = item.button
+        else { return }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+    }
+
     /// Re-anchors the popover so its arrow and window stay centered under the status item
     /// whenever the button's title, icon or length changes (e.g. switching tabs).
     private func repositionPopover() {
         guard popover.isShown, let button = item.button else { return }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.popover.isShown, let button = self.item.button else { return }
-            self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // WindowServer moves NSStatusBarWindow asynchronously after title/width changes.
+        // In addition to NSWindow.didMoveNotification / didResizeNotification,
+        // schedule fallback re-anchor passes across the settle window.
+        for delay in [0.05, 0.1, 0.15, 0.2, 0.25] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.popover.isShown, let button = self.item.button,
+                      let win = button.window, win.frame.origin.y > 0 else { return }
+                self.popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            }
         }
     }
 

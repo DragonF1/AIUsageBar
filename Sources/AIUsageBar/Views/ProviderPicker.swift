@@ -35,7 +35,9 @@ struct ProviderPicker: NSViewRepresentable {
         @objc func changed(_ sender: NSSegmentedControl) {
             let tabs = UsageTab.allCases
             guard tabs.indices.contains(sender.selectedSegment) else { return }
-            parent.tab = tabs[sender.selectedSegment]
+            let newTab = tabs[sender.selectedSegment]
+            parent.tab = newTab
+            UserDefaults.standard.set(newTab.rawValue, forKey: UsageTab.key)
         }
     }
 }
