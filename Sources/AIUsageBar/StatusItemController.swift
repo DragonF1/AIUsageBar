@@ -318,7 +318,7 @@ final class StatusItemController: NSObject {
         notifications.target = self
         notifications.state = Preferences.notifications ? .on : .off
         notifications.toolTip = "Warns when a window passes \(Self.thresholdText(monitor.thresholds)), is used up, "
-            + "resets after a warning, or is on a pace to run out before its reset."
+            + "resets after a warning, or (with the pace forecast shown) is on a pace to run out before its reset."
 
         let login = menu.addItem(withTitle: "Start at login", action: #selector(toggleStartAtLogin), keyEquivalent: "")
         login.target = self

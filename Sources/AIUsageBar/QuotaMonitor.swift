@@ -248,6 +248,11 @@ final class QuotaMonitor {
     /// Read at post time, so the menu switch applies without a restart. The state advances
     /// either way: switching notifications on never replays what was missed.
     var isEnabled: () -> Bool = { Preferences.notifications }
+    /// The pace notification follows the pace forecast switch. Read at observe time, and
+    /// unlike `isEnabled` the state does not advance while it is off: the cycle is not marked
+    /// as warned, so a reset is not announced as "after a warning" nobody saw, and switching
+    /// the forecast on mid-cycle warns as soon as the pace says the window runs out.
+    var showsPace: () -> Bool = { Preferences.showPace }
     /// nil disables the cache; tests pass nil so they never touch the app's real file.
     private let cacheURL: URL?
 
@@ -303,7 +308,7 @@ final class QuotaMonitor {
                 posted = true
             }
         }
-        if !state.paceWarned, r.percent < 100, case .runsOut(let at)? = pace.forecast(for: r.id, now: now) {
+        if showsPace(), !state.paceWarned, r.percent < 100, case .runsOut(let at)? = pace.forecast(for: r.id, now: now) {
             state.paceWarned = true
             if !posted {
                 let window: ResetText.Window = r.window == .fiveHour ? .fiveHour : .other

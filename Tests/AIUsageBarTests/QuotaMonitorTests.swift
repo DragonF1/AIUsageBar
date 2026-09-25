@@ -310,10 +310,11 @@ final class QuotaMonitorTests: XCTestCase {
     private var notifier = FakeNotifier()
 
     private func monitor(thresholds: [Double] = QuotaMonitor.defaultThresholds, enabled: Bool = true,
-                         cacheURL: URL? = nil) -> QuotaMonitor
+                         showPace: Bool = true, cacheURL: URL? = nil) -> QuotaMonitor
     {
         let m = QuotaMonitor(notifier: notifier, thresholds: thresholds, cacheURL: cacheURL)
         m.isEnabled = { enabled }
+        m.showsPace = { showPace }
         return m
     }
 
@@ -396,6 +397,31 @@ final class QuotaMonitorTests: XCTestCase {
         XCTAssertEqual(notifier.posted, [], "80 was crossed while off; it is not replayed")
         m.observe([weekly(96)], now: minutes(10))
         XCTAssertEqual(notifier.posted.map(\.title), ["Claude Code: All models weekly at 96%"])
+    }
+
+    func testPaceWarningFollowsThePaceForecastSwitch() {
+        let m = monitor(showPace: false)
+        m.observe([reading(0)], now: t0)
+        m.observe([reading(30)], now: minutes(15))
+        XCTAssertEqual(notifier.posted, [], "forecast hidden, no pace notification")
+        m.observe([reading(0, resetsAt: hours(7))], now: minutes(25))
+        XCTAssertEqual(notifier.posted, [], "nothing was warned, so the reset is not announced")
+        m.showsPace = { true }
+        m.observe([reading(30, resetsAt: hours(7))], now: minutes(40))
+        XCTAssertEqual(notifier.posted.map(\.title), ["Claude Code: All models 5h running out"],
+                       "switching the forecast on warns as soon as the pace runs the window out")
+    }
+
+    func testPaceSwitchedOnMidCycleWarnsWithoutWaitingForAReset() {
+        let m = monitor(showPace: false)
+        m.observe([reading(0)], now: t0)
+        m.observe([reading(30)], now: minutes(15))
+        XCTAssertEqual(notifier.posted, [])
+        m.showsPace = { true }
+        m.observe([reading(40)], now: minutes(20))
+        XCTAssertEqual(notifier.posted.map(\.id), ["claude|session|||pace"])
+        m.observe([reading(50)], now: minutes(25))
+        XCTAssertEqual(notifier.posted.count, 1, "still once per cycle")
     }
 
     func testPaceWarningOncePerCycle() {

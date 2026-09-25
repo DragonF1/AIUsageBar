@@ -2,8 +2,9 @@ import SwiftUI
 
 /// The "General" tab of the Settings window: the switches that used to live behind the
 /// popover's gear menu and still live, unchanged, in the right-click menu. Same labels, same
-/// bindings, same side effects, just laid out as a pane instead of a dropdown, with room for a
-/// caption under Notifications that a menu item's `.help` text used to carry instead.
+/// bindings, same side effects, just laid out as a pane instead of a dropdown, with room for the
+/// captions under Notifications and the pace forecast that a menu item's `.help` text used to
+/// carry instead.
 struct GeneralSettingsView: View {
     var monitor: QuotaMonitor
 
@@ -20,7 +21,7 @@ struct GeneralSettingsView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("Notifications", isOn: $notifications)
                 Text("Warns at \(StatusItemController.thresholdText(monitor.thresholds)), when a window is used up, "
-                     + "runs out at the current pace, or resets after a warning.")
+                     + "runs out at the current pace (with the forecast shown), or resets after a warning.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -29,7 +30,13 @@ struct GeneralSettingsView: View {
             Toggle("Start at login", isOn: $startAtLogin)
             Toggle("Extra usage credits", isOn: $extraUsage)
             Toggle("Show remaining instead of used", isOn: $showRemaining)
-            Toggle("Show pace forecast", isOn: $showPace)
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Show pace forecast", isOn: $showPace)
+                Text("Off hides the pace line and skips the running-out notification.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             HStack {
                 Text("Menu bar tint")

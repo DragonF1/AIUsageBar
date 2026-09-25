@@ -80,7 +80,7 @@ enum Preferences {
     }
 
     /// Whether a row draws its pace forecast line and the ghost tick on its bar. On by default;
-    /// switching it off does not affect the notifications the pace can still trigger.
+    /// switching it off also skips the pace notification (see `QuotaMonitor.showsPace`).
     static var showPace: Bool {
         get { defaults.object(forKey: Key.showPace) as? Bool ?? true }
         set { defaults.set(newValue, forKey: Key.showPace) }
