@@ -14,7 +14,7 @@ struct GeneralSettingsView: View {
     @AppStorage(Preferences.Key.showRemaining, store: Preferences.defaults) private var showRemaining = false
     @AppStorage(Preferences.Key.showPace, store: Preferences.defaults) private var showPace = true
     @AppStorage(Preferences.Key.menuBarMetric, store: Preferences.defaults) private var metric: MenuBarMetric = .auto
-    @AppStorage(Preferences.Key.refreshInterval, store: Preferences.defaults) private var refreshInterval: RefreshInterval = .minute1
+    @AppStorage(Preferences.Key.refreshInterval, store: Preferences.defaults) private var refreshInterval: RefreshInterval = .minute2
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {

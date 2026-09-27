@@ -2123,3 +2123,82 @@ final class SessionLauncherTests: XCTestCase {
         XCTAssertNil(SessionLauncher.tty(fromPS: "tty\"s0"))
     }
 }
+
+// MARK: - Claude usage store
+
+final class UsageStoreTests: XCTestCase {
+    private var originalDefaults: UserDefaults!
+    private var suiteName = ""
+
+    /// Pins the interval in a scratch suite so a value left in the test process's real defaults
+    /// cannot shift the timing math below.
+    override func setUp() {
+        super.setUp()
+        originalDefaults = Preferences.defaults
+        suiteName = "AIUsageBarTests-\(UUID())"
+        Preferences.defaults = UserDefaults(suiteName: suiteName)!
+        Preferences.refreshInterval = .minute2
+    }
+
+    override func tearDown() {
+        Preferences.defaults = originalDefaults
+        UserDefaults().removePersistentDomain(forName: suiteName)
+        super.tearDown()
+    }
+
+    /// A store whose token comes from a fresh credential file, so every request the fake sees is a usage call.
+    @MainActor
+    private func makeStore(http: FakeHTTP) throws -> UsageStore {
+        let store = UsageStore(cacheURL: nil)
+        store.client = UsageClient(http: http)
+        store.store = fileStore(try tempCredentialFile(expiresAt: (Date().timeIntervalSince1970 + 3600) * 1000))
+        return store
+    }
+
+    private func ok() -> HTTPResponse { HTTPResponse(status: 200, headers: [:], body: sampleUsage) }
+    private let interval = RefreshInterval.minute2.seconds
+
+    @MainActor
+    func testAutomaticRefreshesReachTheEndpointOncePerInterval() async throws {
+        let http = FakeHTTP([ok(), ok()])
+        let store = try makeStore(http: http)
+        let start = Date()
+        await store.refreshIfDue(reason: "timer", now: start)
+        XCTAssertEqual(http.requests.count, 1, "nothing fetched yet, so the first automatic refresh goes through")
+
+        await store.refreshIfDue(reason: "activity", now: start.addingTimeInterval(15))
+        await store.refreshIfDue(reason: "popover", now: start.addingTimeInterval(interval / 2))
+        await store.refreshIfDue(reason: "wake", now: start.addingTimeInterval(interval - UsageStore.timerSlack - 1))
+        XCTAssertEqual(http.requests.count, 1, "activity, popover and wake inside the interval stay off the network")
+
+        // The timer's fetch is stamped a moment after its tick, so the next tick can land a hair early.
+        await store.refreshIfDue(reason: "timer", now: start.addingTimeInterval(interval - 1))
+        XCTAssertEqual(http.requests.count, 2)
+        XCTAssertEqual(store.state, .ok)
+    }
+
+    @MainActor
+    func testFailedFetchStillCountsTowardTheInterval() async throws {
+        let http = FakeHTTP([HTTPResponse(status: 500, headers: [:], body: Data()), ok()])
+        let store = try makeStore(http: http)
+        let start = Date()
+        await store.refreshIfDue(reason: "timer", now: start)
+        await store.refreshIfDue(reason: "popover", now: start.addingTimeInterval(20))
+        XCTAssertEqual(http.requests.count, 1, "a failing endpoint is not retried on every popover open")
+    }
+
+    @MainActor
+    func testRefreshNowSkipsTheIntervalButNotTheRateLimitBackoff() async throws {
+        let http = FakeHTTP([ok(), HTTPResponse(status: 429, headers: ["Retry-After": "600"], body: Data()), ok()])
+        let store = try makeStore(http: http)
+        await store.refresh(reason: "launch")
+        await store.refresh(reason: "manual")
+        XCTAssertEqual(http.requests.count, 2, "Refresh now goes straight to the endpoint")
+        guard case .stale(let msg) = store.state else { return XCTFail("\(store.state)") }
+        XCTAssertTrue(msg.hasPrefix("Rate limited"), msg)
+
+        await store.refresh(reason: "manual")
+        await store.refreshIfDue(reason: "timer", now: Date().addingTimeInterval(interval))
+        XCTAssertEqual(http.requests.count, 2, "the 429's Retry-After holds every trigger off")
+    }
+}

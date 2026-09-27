@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import Observation
+import os
 
 @MainActor @Observable
 final class UsageStore {
@@ -20,6 +21,9 @@ final class UsageStore {
     /// setting of their own. `Preferences.refreshInterval` governs the usage stores instead.
     static let statusPollInterval: TimeInterval = 5 * 60
     static let popoverRefetchAge: TimeInterval = 15
+    /// How far short of a full interval an automatic refresh may land and still fetch. A timer
+    /// fetch is stamped a moment after its tick, so the next tick can measure a hair under one interval.
+    static let timerSlack: TimeInterval = 5
 
     var client = UsageClient()
     var refresher = OAuthRefresher()
@@ -32,8 +36,13 @@ final class UsageStore {
     private var defaultsObserver: NSObjectProtocol?
     private var backoffUntil: Date?
     private var inFlight = false
+    /// When `refresh` last went to the network, successful or not; `refreshIfDue` measures from here.
+    private var lastAttemptAt: Date?
     /// nil disables the cache; tests and the screenshot renderer pass nil so they never touch the app's real file.
     private let cacheURL: URL?
+
+    /// `log show --info --predicate 'subsystem == "io.github.dragonf1.aiusagebar"'` reads these back.
+    private static let log = Logger(subsystem: "io.github.dragonf1.aiusagebar", category: "claude")
 
     init(cacheURL: URL? = AppPaths.supportDirectory.appendingPathComponent("usage.json")) {
         self.cacheURL = cacheURL
@@ -57,7 +66,7 @@ final class UsageStore {
         timer?.invalidate()
         scheduledInterval = interval
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor in await self?.refresh(reason: "timer") }
+            Task { @MainActor in await self?.refreshIfDue(reason: "timer") }
         }
     }
 
@@ -65,9 +74,22 @@ final class UsageStore {
         if scheduledInterval != Preferences.refreshInterval.seconds { scheduleTimer() }
     }
 
+    /// Popover open. Same gate as every other automatic trigger, so opening it again and again
+    /// adds no calls; until the interval is up it shows the last numbers and their "Updated" time.
     func refreshIfStale() {
-        let age = lastUpdated.map { Date().timeIntervalSince($0) } ?? .infinity
-        if age > Self.popoverRefetchAge { Task { await refresh(reason: "popover") } }
+        Task { await refreshIfDue(reason: "popover") }
+    }
+
+    /// The gate for every automatic trigger: the timer, the popover opening, waking from sleep and
+    /// a Claude Code transcript write. The usage endpoint answers 429 quickly and every running
+    /// Claude Code session spends the same token's budget, so together these reach it at most once
+    /// per "Refresh usage every" interval. Launch and Refresh now call `refresh(reason:)` directly,
+    /// which skips this gate but never the 429 backoff.
+    func refreshIfDue(reason: String, now: Date = Date()) async {
+        if let last = lastAttemptAt, now.timeIntervalSince(last) < Preferences.refreshInterval.seconds - Self.timerSlack {
+            return
+        }
+        await refresh(reason: reason)
     }
 
     func refresh(reason: String) async {
@@ -75,6 +97,7 @@ final class UsageStore {
         if let until = backoffUntil, until > Date() { return }
         inFlight = true
         defer { inFlight = false }
+        lastAttemptAt = Date()
 
         do {
             var creds = try store.read()
@@ -89,7 +112,9 @@ final class UsageStore {
                 let fresh = try await refresher.refreshIfNeeded(force: true)
                 try await apply(try await client.fetch(accessToken: fresh.oauth.accessToken))
             }
+            Self.log.notice("fetch ok (\(reason, privacy: .public))")
         } catch UsageError.rateLimited(let retryAfter) {
+            Self.log.error("fetch failed (\(reason, privacy: .public)): rate limited, retry in \(Int(retryAfter), privacy: .public)s")
             backoffUntil = Date().addingTimeInterval(retryAfter)
             state = usage == nil ? .error(UsageError.rateLimited(retryAfter: retryAfter).localizedDescription)
                                  : .stale("Rate limited, retrying at \(Self.timeFormatter.string(from: backoffUntil!))")

@@ -526,14 +526,20 @@ final class PreferenceModelTests: XCTestCase {
         XCTAssertNil(RefreshInterval(rawValue: "bogus"))
     }
 
-    func testRefreshIntervalDefaultsToOneMinuteWhenUnsetOrGarbage() {
+    func testRefreshIntervalDefaultsToTwoMinutesWhenUnsetOrGarbage() {
         withScratchDefaults { defaults in
-            XCTAssertEqual(Preferences.refreshInterval, .minute1, "a fresh suite has nothing stored")
+            XCTAssertEqual(Preferences.refreshInterval, .minute2, "a fresh suite has nothing stored")
             defaults.set("not-a-real-interval", forKey: Preferences.Key.refreshInterval)
-            XCTAssertEqual(Preferences.refreshInterval, .minute1, "garbage data falls back to the default")
-            Preferences.refreshInterval = .seconds30
-            XCTAssertEqual(Preferences.refreshInterval, .seconds30)
+            XCTAssertEqual(Preferences.refreshInterval, .minute2, "garbage data falls back to the default")
+            defaults.set("seconds30", forKey: Preferences.Key.refreshInterval)
+            XCTAssertEqual(Preferences.refreshInterval, .minute2, "the retired 30 second option falls back to the default")
+            Preferences.refreshInterval = .minute5
+            XCTAssertEqual(Preferences.refreshInterval, .minute5)
         }
+    }
+
+    func testShortestRefreshIntervalIsOneMinute() {
+        XCTAssertEqual(RefreshInterval.allCases.map(\.seconds).min(), 60)
     }
 
     func testThresholdsFromConfig() throws {

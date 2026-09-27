@@ -105,7 +105,7 @@ final class StatusItemController: NSObject {
 
     @objc private func didWake() {
         Task {
-            await store.refresh(reason: "wake")
+            await store.refreshIfDue(reason: "wake")
             await antigravity.refresh(reason: "wake")
         }
         status.refreshIfStale()
@@ -149,7 +149,7 @@ final class StatusItemController: NSObject {
         let claudeScheduler = ActivityRefreshScheduler(initialLastFetchAt: Date()) { [weak self] in
             Task { @MainActor in
                 await self?.tokens.refresh(reason: "activity")
-                await self?.store.refresh(reason: "activity")
+                await self?.store.refreshIfDue(reason: "activity")
             }
         }
         claudeActivityScheduler = claudeScheduler

@@ -94,10 +94,11 @@ enum Preferences {
         set { defaults.set(newValue, forKey: Key.antigravityMenuBarOther) }
     }
 
-    /// How often the usage stores poll in the background. Unknown or missing data falls back
-    /// to `.minute1`, which keeps the menu bar closer to live than the original fixed 5 minutes.
+    /// How often the usage stores poll in the background. Unknown or missing data (including the
+    /// retired 30 second option) falls back to `.minute2`: one minute plus the activity-triggered
+    /// refreshes kept Anthropic's usage endpoint answering 429.
     static var refreshInterval: RefreshInterval {
-        get { RefreshInterval(rawValue: defaults.string(forKey: Key.refreshInterval) ?? "") ?? .minute1 }
+        get { RefreshInterval(rawValue: defaults.string(forKey: Key.refreshInterval) ?? "") ?? .minute2 }
         set { defaults.set(newValue.rawValue, forKey: Key.refreshInterval) }
     }
 }
@@ -124,14 +125,12 @@ enum MenuBarMetric: String, CaseIterable {
 /// How often `UsageStore` and `AntigravityStore` poll in the background. The status feeds and
 /// the token stores are unaffected: they keep their own fixed poll (see `UsageStore.statusPollInterval`).
 enum RefreshInterval: String, CaseIterable {
-    case seconds30
     case minute1
     case minute2
     case minute5
 
     var seconds: TimeInterval {
         switch self {
-        case .seconds30: return 30
         case .minute1: return 60
         case .minute2: return 120
         case .minute5: return 300
@@ -140,7 +139,6 @@ enum RefreshInterval: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .seconds30: return "30 seconds"
         case .minute1: return "1 minute"
         case .minute2: return "2 minutes"
         case .minute5: return "5 minutes"
