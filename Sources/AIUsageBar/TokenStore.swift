@@ -5,7 +5,7 @@ import Observation
 /// comes from Claude Code's local transcripts and there is nothing to cache beyond the scanner's own file.
 @MainActor @Observable
 final class TokenStore: TokenLedger {
-    let product = TokenProduct.claudeCode
+    var product: TokenProduct { .claudeCode }
     /// Deduplicated responses from the last `retention` seconds.
     private(set) var records: [TokenRecord] = []
     /// Every session the retained transcripts mention, keyed by session id.

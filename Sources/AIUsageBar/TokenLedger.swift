@@ -33,10 +33,14 @@ struct TokenProduct: Equatable {
     /// The cost window's footer: where the numbers come from and what they are not.
     var footer: String
 
-    static let claudeCode = TokenProduct(
-        name: "Claude Code",
-        scanning: "Scanning Claude Code transcripts…",
-        footer: "Estimates at list prices from the transcripts under ~/.claude/projects, not what a subscription bills. Hover a bar for that day.")
+    /// Computed so the footer names the Claude folder the setting currently points at.
+    static var claudeCode: TokenProduct {
+        let projects = (ClaudeFolder.current().projectsRoot.path as NSString).abbreviatingWithTildeInPath
+        return TokenProduct(
+            name: "Claude Code",
+            scanning: "Scanning Claude Code transcripts…",
+            footer: "Estimates at list prices from the transcripts under \(projects), not what a subscription bills. Hover a bar for that day.")
+    }
 
     static let antigravity = TokenProduct(
         name: "Antigravity",

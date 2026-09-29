@@ -44,14 +44,19 @@ struct AntigravityAuth {
     struct Cached: Codable {
         var accessToken: String
         var expiresAt: Date
+        /// The token file the refresh token came from, so switching the file in Settings drops a
+        /// token minted for the other login. A cache without one predates the setting and is ignored.
+        var source: String?
     }
 
     func accessToken(force: Bool = false) async throws -> String {
         let now = now()
-        if !force, let cached = loadCache(), cached.expiresAt.timeIntervalSince(now) > 60 {
+        let source = credentialFile ?? AntigravityToken.effectiveFile()
+        if !force, let cached = loadCache(), cached.source == source.path,
+           cached.expiresAt.timeIntervalSince(now) > 60 {
             return cached.accessToken
         }
-        let file = try AntigravityToken.read(from: credentialFile ?? AntigravityToken.effectiveFile())
+        let file = try AntigravityToken.read(from: source)
         if !force, !file.isExpired(now: now) {
             return file.accessToken
         }
@@ -65,7 +70,8 @@ struct AntigravityAuth {
             throw AntigravityAuthError.throttled
         }
         recordAttempt(now)
-        let fresh = try await exchange(refreshToken: refreshToken, client: client, now: now)
+        var fresh = try await exchange(refreshToken: refreshToken, client: client, now: now)
+        fresh.source = source.path
         saveCache(fresh)
         return fresh.accessToken
     }

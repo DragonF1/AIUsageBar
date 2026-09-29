@@ -200,7 +200,12 @@ final class StatusItemController: NSObject {
     /// The Claude folder setting moved: watch the new folder and read its login and transcripts
     /// now, instead of waiting for the next poll. Every other defaults change is ignored here.
     private func followClaudeFolder() {
-        guard let watched = watchedClaudeRoot, ClaudeFolder.current().projectsRoot != watched else { return }
+        guard let watched = watchedClaudeRoot else { return }
+        guard ClaudeFolder.current().projectsRoot != watched else {
+            // Same folder, but it may not have existed yet when the watcher was first built.
+            if claudeActivityWatcher == nil { watchClaudeRoot() }
+            return
+        }
         watchClaudeRoot()
         Task {
             await tokens.refresh(reason: "folder")
