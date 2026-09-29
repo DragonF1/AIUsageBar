@@ -2115,6 +2115,57 @@ final class SessionLauncherTests: XCTestCase {
         }
     }
 
+    /// Inside tmux claude's tty is a pane, so no Terminal tab matches it; the tab attached to the
+    /// pane's tmux session is raised instead.
+    func testFocusInsideTmuxRaisesTheAttachedClientsTab() async throws {
+        let tmux = "/opt/homebrew/bin/tmux"
+        let runner = FakeRunner(replies: [
+            "ttys012\n", "none\n",
+            "/dev/ttys003\tother\n/dev/ttys012\tc-claude-work 1\n",
+            "/dev/ttys020\n/dev/ttys021\n", "none\n", "ok\n",
+        ])
+        try await launcher(existing: [tmux], runner: runner).focus(openRow(pid: 9))
+        XCTAssertEqual(runner.commands.count, 6)
+        XCTAssertEqual(runner.commands[2], SessionLauncher.Command(
+            executable: tmux, arguments: ["list-panes", "-a", "-F", "#{pane_tty}\t#{session_name}"]))
+        XCTAssertEqual(runner.commands[3], SessionLauncher.Command(
+            executable: tmux, arguments: ["list-clients", "-t", "=c-claude-work 1", "-F", "#{client_tty}"]))
+        XCTAssertTrue(runner.commands[4].arguments[1].contains("if tty of t is \"/dev/ttys020\""))
+        XCTAssertTrue(runner.commands[5].arguments[1].contains("if tty of t is \"/dev/ttys021\""))
+    }
+
+    /// A tmux session nobody is attached to gets a new Terminal window attached to it, never a
+    /// second `claude --resume`, which would fork the conversation.
+    func testFocusInsideTmuxWithoutClientAttachesANewWindow() async throws {
+        let tmux = "/usr/local/bin/tmux"
+        let runner = FakeRunner(replies: ["ttys012\n", "none\n", "/dev/ttys012\tc-it's\n", ""])
+        try await launcher(existing: [tmux], runner: runner).focus(openRow(pid: 9))
+        XCTAssertEqual(runner.commands.count, 5)
+        XCTAssertEqual(runner.commands[4], SessionLauncher.Command(
+            executable: "/usr/bin/osascript",
+            arguments: ["-e", #"tell application "Terminal""# + "\n"
+                + #"do script "'/usr/local/bin/tmux' attach-session -t '=c-it'\\''s'""# + "\nactivate\nend tell"]))
+    }
+
+    func testFocusOutsideAnyTmuxPaneStillReportsNoTerminal() async {
+        let runner = FakeRunner(replies: ["ttys004\n", "none\n", "/dev/ttys012\tc-x\n"])
+        do {
+            try await launcher(existing: ["/opt/homebrew/bin/tmux"], runner: runner).focus(openRow(pid: 7))
+            XCTFail("expected noTerminalWindow")
+        } catch {
+            XCTAssertEqual(error as? SessionLauncher.Failure, .noTerminalWindow(7, "/dev/ttys004"))
+        }
+        XCTAssertEqual(runner.commands.count, 3)
+    }
+
+    func testTmuxSessionParsing() {
+        let panes = "/dev/ttys001\ta\n/dev/ttys0012\tb\n/dev/ttys002\tname\twith tab\nbroken\n"
+        XCTAssertEqual(SessionLauncher.tmuxSession(tty: "/dev/ttys001", panes: panes), "a")
+        XCTAssertEqual(SessionLauncher.tmuxSession(tty: "/dev/ttys002", panes: panes), "name\twith tab")
+        XCTAssertNil(SessionLauncher.tmuxSession(tty: "/dev/ttys00", panes: panes))
+        XCTAssertNil(SessionLauncher.tmuxSession(tty: "/dev/ttys001", panes: ""))
+    }
+
     func testTTYParsing() {
         XCTAssertEqual(SessionLauncher.tty(fromPS: "ttys000\n"), "/dev/ttys000")
         XCTAssertEqual(SessionLauncher.tty(fromPS: "  ttys12 "), "/dev/ttys12")

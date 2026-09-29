@@ -5,7 +5,8 @@ import Foundation
 /// names a launcher script, through that script with `CLAUDE_RESUME` and `CLAUDE_LAUNCH_DIR` in
 /// its environment (plus whatever its `env_file` exports), so a personal launcher's flags apply.
 /// An open session has its Terminal window raised instead, because a second `claude` on the same
-/// id would fork the conversation, not join it.
+/// id would fork the conversation, not join it. One running inside tmux (ccmux, for one) gets the
+/// Terminal tab attached to its tmux session raised, or a new window attached to that session.
 struct SessionLauncher: Sendable {
     struct Command: Equatable, Sendable {
         var executable: String
@@ -97,10 +98,44 @@ struct SessionLauncher: Sendable {
         guard let pid = row.live?.pid else { return try await resume(row) }
         let ps = try await run(Command(executable: "/bin/ps", arguments: ["-o", "tty=", "-p", String(pid)]))
         guard let tty = Self.tty(fromPS: ps) else { throw Failure.noTTY(pid) }
-        let found = try await run(Command(executable: "/usr/bin/osascript", arguments: ["-e", Self.focusScript(tty: tty)]))
-        guard found.trimmingCharacters(in: .whitespacesAndNewlines) == "ok" else {
-            throw Failure.noTerminalWindow(pid, tty)
+        if try await raiseTerminalTab(tty: tty) { return }
+        // Inside tmux, claude's tty is a tmux pane; the Terminal tab is on the attached client's tty.
+        guard let tmux = Self.tmuxPaths.first(where: fileExists),
+              let panes = try? await run(Command(executable: tmux, arguments: ["list-panes", "-a", "-F", "#{pane_tty}\t#{session_name}"])),
+              let session = Self.tmuxSession(tty: tty, panes: panes)
+        else { throw Failure.noTerminalWindow(pid, tty) }
+        let clients = (try? await run(Command(executable: tmux, arguments: ["list-clients", "-t", "=" + session, "-F", "#{client_tty}"]))) ?? ""
+        for client in clients.split(whereSeparator: \.isNewline) {
+            if try await raiseTerminalTab(tty: String(client)) { return }
         }
+        _ = try await run(Command(executable: "/usr/bin/osascript", arguments: ["-e", Self.attachScript(tmux: tmux, session: session)]))
+    }
+
+    private func raiseTerminalTab(tty: String) async throws -> Bool {
+        let found = try await run(Command(executable: "/usr/bin/osascript", arguments: ["-e", Self.focusScript(tty: tty)]))
+        return found.trimmingCharacters(in: .whitespacesAndNewlines) == "ok"
+    }
+
+    /// Homebrew on Apple Silicon, then Intel; the app's own PATH has neither.
+    static let tmuxPaths = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux"]
+
+    /// The tmux session whose pane sits on `tty`, from `list-panes -a -F '#{pane_tty}<tab>#{session_name}'`.
+    static func tmuxSession(tty: String, panes: String) -> String? {
+        for line in panes.split(whereSeparator: \.isNewline) {
+            let parts = line.split(separator: "\t", maxSplits: 1)
+            if parts.count == 2, parts[0] == tty { return String(parts[1]) }
+        }
+        return nil
+    }
+
+    /// A new Terminal window attached to the session (`=` makes tmux match the name exactly).
+    /// Plain `attach` leaves any other client attached, the same as ccmux's default mirror mode.
+    static func attachScript(tmux: String, session: String) -> String {
+        let shell = "\(quoted(tmux)) attach-session -t \(quoted("=" + session))"
+        let escaped = shell
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "tell application \"Terminal\"\ndo script \"\(escaped)\"\nactivate\nend tell"
     }
 
     /// `ps -o tty=` prints "ttys004", or "??" for a process with no controlling terminal.
