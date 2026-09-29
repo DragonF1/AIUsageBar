@@ -31,8 +31,8 @@ struct SessionRegistry: Sendable {
     /// Working directories whose sessions are not the user's.
     var hiddenFolders: Set<String>
 
-    static let defaultRoot = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".claude/sessions", isDirectory: true)
+    /// `<Claude folder>/sessions` for the folder set in Settings, read when a registry is made.
+    static var defaultRoot: URL { ClaudeFolder.current().sessionsRoot }
 
     init(root: URL = SessionRegistry.defaultRoot,
          isAlive: @escaping @Sendable (Int32) -> Bool = { kill($0, 0) == 0 },

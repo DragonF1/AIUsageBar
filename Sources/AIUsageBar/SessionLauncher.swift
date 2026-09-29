@@ -1,9 +1,12 @@
 import Foundation
 
 /// Reopens a session from the sessions window. A closed session comes back in a new Terminal
-/// window running `claude --resume <id>` in its own folder, or, when `~/.config/aiusagebar/config.json`
-/// names a launcher script, through that script with `CLAUDE_RESUME` and `CLAUDE_LAUNCH_DIR` in
-/// its environment (plus whatever its `env_file` exports), so a personal launcher's flags apply.
+/// window running `claude --resume <id>` in its own folder (plus any extra arguments from Settings),
+/// or, in the custom launcher mode, through the user's script with `CLAUDE_RESUME` and
+/// `CLAUDE_LAUNCH_DIR` in its environment (plus whatever its env file exports), so a personal
+/// launcher's flags apply. Settings chooses the mode; where it never has, `config.json`'s launcher
+/// does (see `ResumeSettings`). With a custom Claude folder set, either way starts `claude` with
+/// `CLAUDE_CONFIG_DIR` pointing at it.
 /// An open session has its Terminal window raised instead, because a second `claude` on the same
 /// id would fork the conversation, not join it. One running inside tmux (ccmux, for one) gets the
 /// Terminal tab attached to its tmux session raised, or a new window attached to that session.
@@ -26,7 +29,9 @@ struct SessionLauncher: Sendable {
             case .noWorkingDirectory(let cwd):
                 return "Its folder is gone: \(cwd ?? "unknown"). Claude Code keeps transcripts per folder, so it cannot be resumed."
             case .noLauncher(let path):
-                return "The launcher named in config.json is missing: \(path)."
+                return path.isEmpty
+                    ? "No launcher script is set. Choose one in Settings, under Claude."
+                    : "The launcher script is missing: \(path). Check it in Settings, under Claude."
             case .noTTY(let pid):
                 return "PID \(pid) has no terminal; it was not started from a Terminal window."
             case .noTerminalWindow(let pid, let tty):
@@ -37,17 +42,38 @@ struct SessionLauncher: Sendable {
         }
     }
 
-    /// Script that opens the session instead of the plain Terminal command; nil means the default.
+    var mode: ResumeMode = .terminal
+    /// Script that opens the session in the custom launcher mode; ignored in the Terminal mode.
     var launcher: URL?
     /// `KEY=value` lines exported into the launcher's environment first; ignored without a launcher.
     var envFile: URL?
+    /// Raw shell text appended after `claude --resume '<id>'`, trimmed, on one line; Terminal mode only.
+    var extraArguments = ""
+    /// `CLAUDE_CONFIG_DIR` for the started `claude`; nil when the default folder is in use.
+    var claudeConfigDir: String?
     var fileExists: @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
     /// Runs a command and returns its stdout; throws `Failure.failed` with stderr on a bad exit.
     var run: @Sendable (Command) async throws -> String = SessionLauncher.execute
 
-    init(settings: AppConfig.Settings.Resume? = AppConfig.loadSettings().resume) {
-        launcher = settings?.launcher.map { URL(fileURLWithPath: AppConfig.expand($0)) }
-        envFile = settings?.envFile.map { URL(fileURLWithPath: AppConfig.expand($0)) }
+    /// Settings first, `config.json`'s resume section (`settings`) for whatever Settings never saved.
+    init(settings: AppConfig.Settings.Resume? = AppConfig.loadSettings().resume,
+         defaults: UserDefaults = Preferences.defaults, folder: ClaudeFolder? = nil) {
+        self.init(resume: ResumeSettings.effective(defaults: defaults, config: settings),
+                  folder: folder ?? ClaudeFolder.current(defaults: defaults))
+    }
+
+    init(resume: ResumeSettings, folder: ClaudeFolder) {
+        mode = resume.mode
+        launcher = Self.url(resume.launcher)
+        envFile = Self.url(resume.envFile)
+        extraArguments = resume.extraArguments
+        claudeConfigDir = folder.claudeConfigDir
+    }
+
+    /// A blank path is no path.
+    private static func url(_ text: String) -> URL? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : URL(fileURLWithPath: AppConfig.expand(trimmed))
     }
 
     // MARK: - closed sessions
@@ -56,31 +82,42 @@ struct SessionLauncher: Sendable {
         _ = try await run(try resumeCommand(sessionId: row.id, cwd: row.cwd))
     }
 
-    /// Default: Terminal opens a new window that changes into the session's folder and runs
-    /// `claude --resume <id>` there (transcripts live per folder). With a configured launcher:
-    /// `bash -c` that exports the env file (`set -a` exports every line), then execs the launcher
-    /// with the session and its folder in the environment. No colour is passed either way: Claude
-    /// Code reads the session's own colour back from the transcript on `--resume`.
+    /// Terminal mode: Terminal opens a new window that changes into the session's folder and runs
+    /// `claude --resume <id>` there (transcripts live per folder). Launcher mode: `bash -c` that
+    /// exports the env file (`set -a` exports every line), then execs the launcher with the session
+    /// and its folder in the environment. No colour is passed either way: Claude Code reads the
+    /// session's own colour back from the transcript on `--resume`.
     func resumeCommand(sessionId: String, cwd: String?) throws -> Command {
         guard let cwd, fileExists(cwd) else { throw Failure.noWorkingDirectory(cwd) }
-        guard let launcher else {
-            let script = Self.terminalScript(cwd: cwd, sessionId: sessionId)
+        guard mode == .launcher else {
+            let script = Self.terminalScript(cwd: cwd, sessionId: sessionId,
+                                             extraArguments: extraArguments, claudeConfigDir: claudeConfigDir)
             return Command(executable: "/usr/bin/osascript", arguments: ["-e", script])
         }
+        guard let launcher else { throw Failure.noLauncher("") }
         guard fileExists(launcher.path) else { throw Failure.noLauncher(launcher.path) }
         var script = ""
         if let envFile {
             script += "set -a; [ -f \(Self.quoted(envFile.path)) ] && . \(Self.quoted(envFile.path)); set +a; "
         }
         script += "exec \(Self.quoted(launcher.path))"
-        return Command(executable: "/bin/bash", arguments: ["-c", script],
-                       environment: ["CLAUDE_RESUME": sessionId, "CLAUDE_LAUNCH_DIR": cwd])
+        var environment = ["CLAUDE_RESUME": sessionId, "CLAUDE_LAUNCH_DIR": cwd]
+        if let claudeConfigDir { environment["CLAUDE_CONFIG_DIR"] = claudeConfigDir }
+        return Command(executable: "/bin/bash", arguments: ["-c", script], environment: environment)
     }
 
-    /// AppleScript for the default resume: `do script` opens a new Terminal window running the
-    /// command in a login shell, so `claude` resolves through the user's own PATH.
-    static func terminalScript(cwd: String, sessionId: String) -> String {
-        let shell = "cd \(quoted(cwd)) && claude --resume \(quoted(sessionId))"
+    /// AppleScript for the Terminal resume: `do script` opens a new Terminal window running the
+    /// command in a login shell, so `claude` resolves through the user's own PATH. The extra
+    /// arguments go in as typed, shell syntax and all, after their newlines become blanks and the
+    /// ends are trimmed; only the AppleScript string around them is escaped.
+    static func terminalScript(cwd: String, sessionId: String, extraArguments: String = "",
+                               claudeConfigDir: String? = nil) -> String {
+        var shell = "cd \(quoted(cwd)) && "
+        if let claudeConfigDir { shell += "CLAUDE_CONFIG_DIR=\(quoted(claudeConfigDir)) " }
+        shell += "claude --resume \(quoted(sessionId))"
+        let extra = String(extraArguments.map { $0.isNewline ? " " : $0 })
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !extra.isEmpty { shell += " " + extra }
         let escaped = shell
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")

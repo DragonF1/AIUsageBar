@@ -6,7 +6,9 @@ import SwiftUI
 /// closed one in a new window through the launcher; on success the sessions window closes.
 struct SessionsView: View {
     var tokens: TokenStore
-    var launcher = SessionLauncher()
+    /// Made per click, so a change in Settings (the resume mode, its arguments, the Claude folder)
+    /// applies to the next resume without reopening this window.
+    var makeLauncher: () -> SessionLauncher = { SessionLauncher() }
     var onRefresh: () -> Void
     var onOpened: () -> Void = {}
 
@@ -62,6 +64,7 @@ struct SessionsView: View {
         guard opening == nil else { return }
         opening = row.id
         notice = nil
+        let launcher = makeLauncher()
         Task {
             do {
                 if row.isOpen { try await launcher.focus(row) } else { try await launcher.resume(row) }

@@ -1,7 +1,10 @@
 import Foundation
 
 /// Settings the app cannot work out on its own, read from `~/.config/aiusagebar/`. Every file is
-/// optional and none of them is ever written by the app; a missing file means the built-in default.
+/// optional and the app never writes any of them; a missing file means the built-in default. The
+/// same choices can be made in the Settings window, which the app stores itself: in UserDefaults
+/// (see `Preferences`), and the Antigravity OAuth client in its own Keychain item (see
+/// `AntigravityClientStore`). A value saved there wins over the file's, where the file has one.
 enum AppConfig {
     static let directory = URL(fileURLWithPath: NSHomeDirectory())
         .appendingPathComponent(".config/aiusagebar", isDirectory: true)
@@ -67,6 +70,13 @@ enum AppConfig {
     /// `~` at the start of a configured path means the home folder.
     static func expand(_ path: String) -> String {
         (path as NSString).expandingTildeInPath
+    }
+
+    /// The same for a home folder that is not the process's: `~` and `~/...` only.
+    static func expand(_ path: String, home: String) -> String {
+        if path == "~" { return home }
+        if path.hasPrefix("~/") { return home + path.dropFirst(1) }
+        return path
     }
 
     private static func load<T: Decodable>(_ type: T.Type, from url: URL) -> T? {

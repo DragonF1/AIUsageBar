@@ -65,24 +65,33 @@ enum CredentialError: LocalizedError {
 /// Reads Claude Code's credential. Goes through `/usr/bin/security` on purpose:
 /// that binary is already on the Keychain item's ACL (Claude Code writes through
 /// it), so no "allow access" dialog appears. Nothing here writes.
+///
+/// Which login it reads follows the Claude folder setting (`ClaudeFolder`): the plain Keychain
+/// item and `~/.claude/.credentials.json` for the default folder; for a custom one, only the
+/// Keychain items Claude Code names after that folder plus `<folder>/.credentials.json`, never the
+/// plain item, which belongs to the default folder's account. `service` and `fallbackFile` pin
+/// one item and one file instead (the tests, mostly).
 struct CredentialStore {
-    static let service = "Claude Code-credentials"
-    static let fallbackFile = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".claude/.credentials.json")
+    static let service = ClaudeFolder.baseService
 
-    var service = CredentialStore.service
-    var fallbackFile = CredentialStore.fallbackFile
+    var service: String?
+    var fallbackFile: URL?
+    var folder: @Sendable () -> ClaudeFolder = { ClaudeFolder.current() }
 
     func read() throws -> StoredCredentials {
-        if let account = try keychainAccount() {
-            let out = try Shell.run("/usr/bin/security", ["find-generic-password", "-s", service, "-w"])
-            guard out.status == 0 else { throw CredentialError.securityFailed(out.stderr.trimmed) }
-            return try parse(out.stdout.trimmed, source: .keychain(account: account))
+        let current = folder()
+        let file = fallbackFile ?? current.credentialsFile
+        for item in service.map({ [$0] }) ?? current.keychainServices {
+            if let account = try keychainAccount(service: item) {
+                let out = try Shell.run("/usr/bin/security", ["find-generic-password", "-s", item, "-w"])
+                guard out.status == 0 else { throw CredentialError.securityFailed(out.stderr.trimmed) }
+                return try parse(out.stdout.trimmed, source: .keychain(account: account))
+            }
         }
-        guard let data = FileManager.default.contents(atPath: fallbackFile.path) else {
+        guard let data = FileManager.default.contents(atPath: file.path) else {
             throw CredentialError.notFound
         }
-        return try parse(String(decoding: data, as: UTF8.self), source: .file(fallbackFile))
+        return try parse(String(decoding: data, as: UTF8.self), source: .file(file))
     }
 
     // MARK: - internals
@@ -97,7 +106,7 @@ struct CredentialStore {
     }
 
     /// The `acct` attribute of the Keychain item, kept as the credential's source. nil when absent.
-    private func keychainAccount() throws -> String? {
+    private func keychainAccount(service: String) throws -> String? {
         let out = try Shell.run("/usr/bin/security", ["find-generic-password", "-s", service])
         guard out.status == 0 else { return nil }
         // "acct"<blob>="<account name>"

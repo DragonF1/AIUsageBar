@@ -32,6 +32,8 @@ final class StatusItemController: NSObject {
     private var claudeActivityScheduler: ActivityRefreshScheduler?
     private var antigravityActivityScheduler: ActivityRefreshScheduler?
     private var claudeActivityWatcher: ActivityWatcher?
+    /// The Claude `projects` root `claudeActivityWatcher` was built for, to notice the setting move.
+    private var watchedClaudeRoot: URL?
     private var antigravityActivityWatcher: ActivityWatcher?
     private var activityPumpTimer: Timer?
 
@@ -75,8 +77,9 @@ final class StatusItemController: NSObject {
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
         observeStore()
-        // The tab picker and the menu's tint switch write UserDefaults; the menu bar follows both.
-        NotificationCenter.default.addObserver(self, selector: #selector(render),
+        // The tab picker and the menu's tint switch write UserDefaults; the menu bar follows both,
+        // and so does the Claude folder watcher when the Claude folder setting changes.
+        NotificationCenter.default.addObserver(self, selector: #selector(defaultsChanged),
                                                name: UserDefaults.didChangeNotification, object: nil)
         // WindowServer relocates NSStatusBarWindow asynchronously after title/width changes;
         // re-anchor the popover when the status item window settles into its new position.
@@ -101,6 +104,11 @@ final class StatusItemController: NSObject {
         activityPumpTimer?.invalidate()
         claudeActivityWatcher?.stop()
         antigravityActivityWatcher?.stop()
+    }
+
+    @objc private func defaultsChanged() {
+        render()
+        followClaudeFolder()
     }
 
     @objc private func didWake() {
@@ -153,9 +161,7 @@ final class StatusItemController: NSObject {
             }
         }
         claudeActivityScheduler = claudeScheduler
-        claudeActivityWatcher = ActivityWatcher.forRoots([TokenScanner.defaultRoot]) { [weak claudeScheduler] in
-            claudeScheduler?.activityDetected()
-        }
+        watchClaudeRoot()
 
         let antigravityScheduler = ActivityRefreshScheduler(initialLastFetchAt: Date()) { [weak self] in
             Task { @MainActor in
@@ -179,6 +185,27 @@ final class StatusItemController: NSObject {
         pump.tolerance = 0.1
         RunLoop.main.add(pump, forMode: .common)
         activityPumpTimer = pump
+    }
+
+    /// Watches the transcript root of the Claude folder in use, dropping any watcher on another.
+    private func watchClaudeRoot() {
+        let root = ClaudeFolder.current().projectsRoot
+        watchedClaudeRoot = root
+        claudeActivityWatcher?.stop()
+        claudeActivityWatcher = ActivityWatcher.forRoots([root]) { [weak self] in
+            self?.claudeActivityScheduler?.activityDetected()
+        }
+    }
+
+    /// The Claude folder setting moved: watch the new folder and read its login and transcripts
+    /// now, instead of waiting for the next poll. Every other defaults change is ignored here.
+    private func followClaudeFolder() {
+        guard let watched = watchedClaudeRoot, ClaudeFolder.current().projectsRoot != watched else { return }
+        watchClaudeRoot()
+        Task {
+            await tokens.refresh(reason: "folder")
+            await store.refresh(reason: "folder")
+        }
     }
 
     private func observeStore() {

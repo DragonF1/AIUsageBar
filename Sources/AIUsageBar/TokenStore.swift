@@ -22,6 +22,11 @@ final class TokenStore: TokenLedger {
 
     var scanner = TokenScanner()
     var registry = SessionRegistry()
+    /// The Claude folder in use, asked at every refresh so a Settings change applies to the next one.
+    var folder: () -> ClaudeFolder = { ClaudeFolder.current() }
+    /// The `projects` root the scanner and registry were last aimed at by `followFolder`. Compared
+    /// rather than assigned blind, so a scanner or registry set by hand is left alone until the setting moves.
+    private var followedRoot = TokenScanner.defaultRoot
 
     private var timer: Timer?
     private var inFlight = false
@@ -46,6 +51,7 @@ final class TokenStore: TokenLedger {
         if inFlight { return }
         inFlight = true
         defer { inFlight = false }
+        followFolder()
         do {
             records = try await scanner.scan(retainSince: Date().addingTimeInterval(-Self.retention))
             sessions = Dictionary(uniqueKeysWithValues: await scanner.sessions().map { ($0.sessionId, $0) })
@@ -57,6 +63,16 @@ final class TokenStore: TokenLedger {
         // Cheap and independent of the transcripts, so a scan failure still shows what is open.
         let registry = registry
         live = await Task.detached(priority: .utility) { registry.live() }.value
+    }
+
+    /// Points the scanner (with the cache of that folder) and the registry at the Claude folder
+    /// when the setting has moved since the last refresh.
+    private func followFolder() {
+        let current = folder()
+        guard current.projectsRoot != followedRoot else { return }
+        followedRoot = current.projectsRoot
+        scanner = TokenScanner(root: current.projectsRoot, cacheURL: current.tokenCacheURL)
+        registry.root = current.sessionsRoot
     }
 
     /// Takes a scan's worth of data as if the scanner had just produced it. The screenshot

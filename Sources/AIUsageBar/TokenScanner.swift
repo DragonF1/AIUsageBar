@@ -129,16 +129,16 @@ enum TokenScanError: LocalizedError, Equatable {
 
 // MARK: - Scanner
 
-/// Reads `~/.claude/projects` incrementally: per-file byte offsets plus an id-keyed record map,
+/// Reads the Claude folder's `projects` (`~/.claude/projects` by default) incrementally: per-file byte offsets plus an id-keyed record map,
 /// both persisted so a poll only reads the bytes appended since the last one.
 actor TokenScanner {
     let root: URL
     /// nil disables persistence (tests).
     let cacheURL: URL?
 
-    static let defaultRoot = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".claude/projects", isDirectory: true)
-    static var defaultCacheURL: URL { AppPaths.supportDirectory.appendingPathComponent("tokens.json") }
+    /// The folder set in Settings, read when a scanner is made; each folder has a cache of its own.
+    static var defaultRoot: URL { ClaudeFolder.current().projectsRoot }
+    static var defaultCacheURL: URL { ClaudeFolder.current().tokenCacheURL }
 
     init(root: URL = TokenScanner.defaultRoot, cacheURL: URL? = TokenScanner.defaultCacheURL) {
         self.root = root

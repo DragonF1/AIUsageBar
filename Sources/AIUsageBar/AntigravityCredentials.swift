@@ -23,6 +23,15 @@ struct AntigravityToken: Equatable {
     static let defaultFile = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".gemini/jetski-standalone-oauth-token")
 
+    /// The token file in use: the path saved under "Token file" in Settings (a tilde is expanded),
+    /// or the default when none is saved or it is blank.
+    static func effectiveFile(defaults: UserDefaults = Preferences.defaults, home: String = NSHomeDirectory()) -> URL {
+        let saved = (defaults.string(forKey: Preferences.Key.antigravityTokenFile) ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !saved.isEmpty else { return URL(fileURLWithPath: home + "/.gemini/jetski-standalone-oauth-token") }
+        return URL(fileURLWithPath: AppConfig.expand(saved, home: home))
+    }
+
     init?(json: [String: Any]) {
         guard let token = json["token"] as? [String: Any],
               let access = token["access_token"] as? String, !access.isEmpty else { return nil }

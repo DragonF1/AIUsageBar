@@ -94,28 +94,35 @@ struct ClaudeCLIProbe: ClaudeCLITouch {
     /// Where the probe runs: an empty folder, so the trust question is about nothing.
     static let directory = AppPaths.supportDirectory.appendingPathComponent("claude-probe", isDirectory: true)
 
-    static let candidates: [String] = {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return [
-            home + "/.local/bin/claude",
+    /// Where `claude` is looked for first: the usual install places, then the local install under
+    /// the Claude folder in use (and the default folder's, when that is a different one).
+    static func candidates(folder: ClaudeFolder) -> [String] {
+        var list = [
+            folder.home + "/.local/bin/claude",
             "/opt/homebrew/bin/claude",
             "/usr/local/bin/claude",
-            home + "/.claude/local/claude",
         ]
-    }()
+        for local in [folder.localBinary, folder.defaultPath + "/local/claude"] where !list.contains(local) {
+            list.append(local)
+        }
+        return list
+    }
 
     /// No tools, no MCP servers, no hooks, no Remote Control, classic renderer (see above): the
     /// session is never given a prompt. `--settings` is a per-launch overlay; the user's own settings stay.
     static let arguments = ["--allowed-tools", "", "--strict-mcp-config",
                             "--settings", #"{"remoteControlAtStartup":false,"tui":"default","disableAllHooks":true}"#]
 
+    /// Found once, when the probe is made: a changed Claude folder does not move the binary.
     var binary: String? = ClaudeCLIProbe.locate()
+    /// The Claude folder in use, asked when the probe runs so a Settings change applies to the next one.
+    var folder: @Sendable () -> ClaudeFolder = { ClaudeFolder.current() }
     /// Give up on the credential changing after this long.
     var timeout: TimeInterval = 20
     /// Answer the trust question if the credential has not changed by then.
     var trustAfter: TimeInterval = 7
-    var sessionsRoot = SessionRegistry.defaultRoot
-    var projectsRoot = TokenScanner.defaultRoot
+    var sessionsRoot: URL { folder().sessionsRoot }
+    var projectsRoot: URL { folder().projectsRoot }
     /// What the last run saw and did, for working out why a refresh did not happen.
     static var logFile: URL { directory.appendingPathComponent("last-run.txt") }
 
@@ -130,7 +137,7 @@ struct ClaudeCLIProbe: ClaudeCLITouch {
         return projectsRoot.appendingPathComponent(name, isDirectory: true)
     }
 
-    static func locate(candidates: [String] = ClaudeCLIProbe.candidates) -> String? {
+    static func locate(candidates: [String] = ClaudeCLIProbe.candidates(folder: .current())) -> String? {
         if let hit = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) { return hit }
         guard let out = try? Shell.run("/usr/bin/which", ["claude"]), out.status == 0 else { return nil }
         let path = out.stdout.trimmed
@@ -165,7 +172,7 @@ struct ClaudeCLIProbe: ClaudeCLITouch {
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = Self.arguments
         process.currentDirectoryURL = Self.directory
-        process.environment = Self.environment()
+        process.environment = Self.environment(claudeConfigDir: folder().claudeConfigDir)
         process.standardInput = secondaryHandle
         process.standardOutput = secondaryHandle
         process.standardError = secondaryHandle
@@ -291,11 +298,16 @@ struct ClaudeCLIProbe: ClaudeCLITouch {
 
     /// The app's environment without anything that would point Claude Code at another account
     /// or make it think it is nested in a session, plus the paths `claude` is usually installed under.
-    static func environment(base: [String: String] = ProcessInfo.processInfo.environment) -> [String: String] {
+    /// `CLAUDE_CONFIG_DIR` is the Claude folder setting's, or absent for the default folder: an
+    /// inherited one would send the probe to a folder the app is not reading.
+    static func environment(base: [String: String] = ProcessInfo.processInfo.environment,
+                            claudeConfigDir: String? = nil) -> [String: String] {
         var env = base
-        for key in env.keys where key.hasPrefix("ANTHROPIC_") || key.hasPrefix("CLAUDE_CODE_") || key == "CLAUDECODE" {
+        for key in env.keys where key.hasPrefix("ANTHROPIC_") || key.hasPrefix("CLAUDE_CODE_") || key == "CLAUDECODE"
+            || key == "CLAUDE_CONFIG_DIR" {
             env.removeValue(forKey: key)
         }
+        if let claudeConfigDir { env["CLAUDE_CONFIG_DIR"] = claudeConfigDir }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let extra = [home + "/.local/bin", "/opt/homebrew/bin", "/usr/local/bin"]
         env["PATH"] = (extra + (env["PATH"] ?? "/usr/bin:/bin").split(separator: ":").map(String.init))

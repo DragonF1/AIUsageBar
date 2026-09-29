@@ -17,6 +17,12 @@ enum Preferences {
         static let showPace = "showPace"
         static let antigravityMenuBarOther = "antigravityMenuBarOther"
         static let refreshInterval = "refreshInterval"
+        static let claudeFolder = "claudeFolder"
+        static let resumeMode = "resumeMode"
+        static let resumeLauncher = "resumeLauncher"
+        static let resumeEnvFile = "resumeEnvFile"
+        static let resumeExtraArguments = "resumeExtraArguments"
+        static let antigravityTokenFile = "antigravityTokenFile"
     }
 
     static var defaults: UserDefaults = .standard
@@ -100,6 +106,51 @@ enum Preferences {
     static var refreshInterval: RefreshInterval {
         get { RefreshInterval(rawValue: defaults.string(forKey: Key.refreshInterval) ?? "") ?? .minute2 }
         set { defaults.set(newValue.rawValue, forKey: Key.refreshInterval) }
+    }
+}
+
+extension Preferences {
+    /// The Claude Code folder, as typed. Empty means the default `~/.claude`; blanks around the
+    /// path are dropped and a blank value is stored as no value. See `ClaudeFolder`.
+    static var claudeFolder: String {
+        get { (defaults.string(forKey: Key.claudeFolder) ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        set {
+            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty { defaults.removeObject(forKey: Key.claudeFolder) } else { defaults.set(trimmed, forKey: Key.claudeFolder) }
+        }
+    }
+
+    /// How a closed session is reopened; nil until Settings has saved a choice, so the mode can
+    /// still follow config.json. The launcher, env file and extra arguments work the same way:
+    /// nil is "never saved", an empty string is a deliberate blank. See `ResumeSettings.effective`.
+    static var resumeMode: ResumeMode? {
+        get { defaults.string(forKey: Key.resumeMode).flatMap(ResumeMode.init(rawValue:)) }
+        set { setOptional(newValue?.rawValue, forKey: Key.resumeMode) }
+    }
+
+    static var resumeLauncher: String? {
+        get { defaults.string(forKey: Key.resumeLauncher) }
+        set { setOptional(newValue, forKey: Key.resumeLauncher) }
+    }
+
+    static var resumeEnvFile: String? {
+        get { defaults.string(forKey: Key.resumeEnvFile) }
+        set { setOptional(newValue, forKey: Key.resumeEnvFile) }
+    }
+
+    static var resumeExtraArguments: String? {
+        get { defaults.string(forKey: Key.resumeExtraArguments) }
+        set { setOptional(newValue, forKey: Key.resumeExtraArguments) }
+    }
+
+    /// Antigravity's OAuth token file when it is not at the default place; nil or blank means the default.
+    static var antigravityTokenFile: String? {
+        get { defaults.string(forKey: Key.antigravityTokenFile) }
+        set { setOptional(newValue, forKey: Key.antigravityTokenFile) }
+    }
+
+    private static func setOptional(_ value: String?, forKey key: String) {
+        if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
     }
 }
 

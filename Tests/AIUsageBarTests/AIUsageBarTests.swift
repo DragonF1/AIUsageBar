@@ -753,7 +753,7 @@ final class AntigravityAuthTests: XCTestCase {
         let file = try tempAntigravityFile(expiry: rfc3339(Date().addingTimeInterval(-10)))
         let http = FakeHTTP([])
         var (auth, _) = makeAuth(http: http, file: file)
-        auth.client = nil
+        auth.clientProvider = { nil }
         do {
             _ = try await auth.accessToken()
             XCTFail("expected noRefreshClient")

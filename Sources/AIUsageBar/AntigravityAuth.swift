@@ -11,7 +11,7 @@ enum AntigravityAuthError: LocalizedError, Equatable {
         switch self {
         case .loginExpired: return "Antigravity login expired. Sign in again in Antigravity."
         case .noRefreshClient:
-            return "Antigravity's token has expired. Open Antigravity so it refreshes the token, or add ~/.config/aiusagebar/antigravity-client.json to let this app refresh it."
+            return "Antigravity's token has expired. Open Antigravity so it refreshes the token, or add its OAuth client in Settings, under Antigravity, to let this app refresh it."
         case .throttled: return "Antigravity token refresh throttled; try again in a minute."
         case let .http(status, body): return "Antigravity token refresh failed (HTTP \(status)): \(body)"
         case .malformed: return "Antigravity token refresh returned an unexpected payload."
@@ -23,15 +23,19 @@ enum AntigravityAuthError: LocalizedError, Equatable {
 /// credential file. Order: this app's cached token, then the app's file token if still
 /// valid, then a refresh against Google's token endpoint using the refresh token. The refresh
 /// needs the OAuth client Antigravity signs in with, which this app does not ship: it comes from
-/// `~/.config/aiusagebar/antigravity-client.json` (see `AppConfig`). Without that file an expired
-/// token is reported, and the next poll picks up whatever Antigravity itself has refreshed.
+/// the Keychain item saved in Settings, or else `~/.config/aiusagebar/antigravity-client.json`
+/// (see `AntigravityClientStore`). Without either an expired token is reported, and the next poll
+/// picks up whatever Antigravity itself has refreshed. The token file is the one set in Settings,
+/// or Antigravity's default.
 struct AntigravityAuth {
     static let tokenURL = URL(string: "https://oauth2.googleapis.com/token")!
     static let minInterval: TimeInterval = 60
 
     var http: HTTPClient = URLSessionHTTPClient()
-    var client: AppConfig.OAuthClient? = AppConfig.loadAntigravityClient()
-    var credentialFile: URL = AntigravityToken.defaultFile
+    /// Asked only when a refresh is due, so a client saved in Settings applies to the next one.
+    var clientProvider: () -> AppConfig.OAuthClient? = { AntigravityClientStore.live.resolve()?.client }
+    /// Antigravity's token file; nil means the one Settings names, or the default.
+    var credentialFile: URL?
     var cacheFile: URL = AppPaths.supportDirectory.appendingPathComponent("antigravity-token.json")
     var lastAttempt: () -> Date? = { Self.stampDate() }
     var recordAttempt: (Date) -> Void = { Self.writeStamp($0) }
@@ -47,14 +51,14 @@ struct AntigravityAuth {
         if !force, let cached = loadCache(), cached.expiresAt.timeIntervalSince(now) > 60 {
             return cached.accessToken
         }
-        let file = try AntigravityToken.read(from: credentialFile)
+        let file = try AntigravityToken.read(from: credentialFile ?? AntigravityToken.effectiveFile())
         if !force, !file.isExpired(now: now) {
             return file.accessToken
         }
         guard let refreshToken = file.refreshToken, !refreshToken.isEmpty else {
             throw AntigravityAuthError.loginExpired
         }
-        guard let client else { throw AntigravityAuthError.noRefreshClient }
+        guard let client = clientProvider() else { throw AntigravityAuthError.noRefreshClient }
         if let last = lastAttempt(), now.timeIntervalSince(last) < Self.minInterval {
             // A refresh just happened; the file token is our best remaining option.
             if !file.isExpired(now: now) { return file.accessToken }
@@ -127,5 +131,13 @@ struct AntigravityAuth {
                                                  withIntermediateDirectories: true)
         try? data.write(to: cacheFile, options: .atomic)
         try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: cacheFile.path)
+    }
+}
+
+extension AntigravityAuth {
+    /// A fixed client, or none: never consults the Keychain or `antigravity-client.json`.
+    init(client: AppConfig.OAuthClient?) {
+        self.init()
+        clientProvider = { client }
     }
 }

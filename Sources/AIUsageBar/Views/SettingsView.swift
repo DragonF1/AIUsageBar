@@ -1,13 +1,14 @@
 import SwiftUI
 
 /// The window behind the popover's gear and the right-click menu's "Settings…": the switches
-/// on "General", the menu bar text editor on "Menu bar", and the colour scale editor on
-/// "Colours". A segmented switch and a `switch` over the pane, not a `TabView`: the NSTabView
+/// on "General", the menu bar text editor on "Menu bar", the colour scale editor on "Colours",
+/// the Claude Code folder and resume choices on "Claude", and the Antigravity OAuth client and
+/// token file on "Antigravity". A segmented switch and a `switch` over the pane, not a `TabView`: the NSTabView
 /// behind that draws its tab strip in the light appearance while the window is dark, and the
 /// pane box it adds has no inner padding.
 struct SettingsView: View {
     enum Pane: String, CaseIterable, Identifiable {
-        case general, menuBar, colours
+        case general, menuBar, colours, claude, antigravity
 
         var id: String { rawValue }
 
@@ -16,6 +17,8 @@ struct SettingsView: View {
             case .general: return "General"
             case .menuBar: return "Menu bar"
             case .colours: return "Colours"
+            case .claude: return "Claude"
+            case .antigravity: return "Antigravity"
             }
         }
 
@@ -24,6 +27,8 @@ struct SettingsView: View {
             case .general: return "Switches and the menu bar tint"
             case .menuBar: return "What the menu bar reads"
             case .colours: return "Bands, cutoffs and their colours"
+            case .claude: return "Claude Code folder, resume"
+            case .antigravity: return "OAuth client, token file"
             }
         }
     }
@@ -62,11 +67,16 @@ struct SettingsView: View {
                     MenuBarFormatSection(usage: usage, antigravity: antigravity)
                 case .colours:
                     ColorScaleSettingsView()
+                case .claude:
+                    ClaudeSettingsView()
+                case .antigravity:
+                    AntigravitySettingsView()
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Chrome.inset)
         }
-        .frame(width: 560)
+        // Wide enough for the five-way switch (435 pt) beside the longest subtitle.
+        .frame(width: 640)
     }
 }

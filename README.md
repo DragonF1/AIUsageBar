@@ -65,7 +65,11 @@ There is no Apple developer certificate behind the build, which is why there is 
 
 ## Configuration
 
-Optional. The app reads `~/.config/aiusagebar/` and never writes there.
+Optional. The app reads `~/.config/aiusagebar/` and never writes there. Everything below can also be set in the Settings window, on the Claude and Antigravity tabs; what the window saves (UserDefaults, plus one Keychain item for the Antigravity client) wins over the file where the file has the same setting.
+
+- Claude tab, "Claude Code folder": the folder Claude Code keeps its state in when it is not `~/.claude` (the one `CLAUDE_CONFIG_DIR` names). The login (Keychain item `Claude Code-credentials-<first 8 hex of the SHA-256 of the path>`, then `<folder>/.credentials.json`), the transcripts, the session registry and the folder watcher all follow it without a restart, and every `claude` the app starts gets `CLAUDE_CONFIG_DIR`. With a custom folder the plain `Claude Code-credentials` item is never read: it belongs to the default folder's account.
+- Claude tab, "Resume": "Terminal window" (optional extra arguments appended after `claude --resume '<id>'`) or "Custom launcher script" (a launcher and an optional env file, as `config.json`'s `resume` below). A `config.json` launcher is what the window shows, and picks the custom launcher, until you save something else.
+- Antigravity tab: the OAuth client id and secret (stored in the macOS Keychain, service `io.github.dragonf1.aiusagebar`, account `antigravity-oauth-client`; the Keychain wins over `antigravity-client.json`) and an optional token file path instead of `~/.gemini/jetski-standalone-oauth-token`.
 
 - `config.json` has three keys. `{"claude": {"refresh": true}}` lets the app start `claude` in the background when the stored token has expired, so Claude Code refreshes it (see "How it works"). `{"notifications": {"thresholds": [80, 95]}}` sets the percentages the notifications warn at (default 80 and 95; an empty list keeps only the used-up, pace and reset notices). `"resume"` changes what "Resume" in the sessions window runs. Default is a new Terminal window with `claude --resume <id>` in the session's folder. To go through your own launcher script instead (say one that adds `--permission-mode` or `--effort` flags):
 
