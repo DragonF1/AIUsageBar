@@ -13,7 +13,6 @@ enum AppConfig {
 
     /// `config.json`:
     /// `{"claude": {"refresh": true},
-    ///   "resume": {"launcher": "~/bin/my-claude.sh", "env_file": "~/bin/my-claude.env"},
     ///   "notifications": {"thresholds": [80, 95]}}`
     struct Settings: Codable, Equatable {
         struct Claude: Codable, Equatable {
@@ -22,14 +21,6 @@ enum AppConfig {
             /// Off by default: the app then only reads whatever Claude Code keeps fresh.
             var refresh: Bool?
         }
-        struct Resume: Codable, Equatable {
-            /// Script to run instead of a plain `claude --resume`. It receives `CLAUDE_RESUME`
-            /// (the session id) and `CLAUDE_LAUNCH_DIR` (the session's folder) in its environment
-            /// and is expected to open the terminal window itself.
-            var launcher: String?
-            /// `KEY=value` file exported into the launcher's environment before it runs.
-            var envFile: String?
-        }
         struct Notifications: Codable, Equatable {
             /// Percentages at which a window's rising usage posts a warning. Absent means the
             /// built-in 80 and 95; an empty list turns the threshold warnings off and leaves
@@ -37,7 +28,6 @@ enum AppConfig {
             var thresholds: [Double]?
         }
         var claude: Claude?
-        var resume: Resume?
         var notifications: Notifications?
 
         var refreshesClaudeToken: Bool { claude?.refresh ?? false }

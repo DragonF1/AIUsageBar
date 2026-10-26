@@ -63,7 +63,6 @@ final class RendererTests: XCTestCase {
             XCTAssertLessThanOrEqual(record.timestamp, now)
             XCTAssertGreaterThanOrEqual(record.timestamp, start)
         }
-        XCTAssertEqual(f.claudeLive.map(\.sessionId), Array(f.claudeSessions.prefix(2).map(\.sessionId)))
     }
 
     func testSamplesRiseSoBothWindowsForecast() {

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Renders the README screenshots into docs/screenshots/ from fixture numbers: the app's --render
-# flag draws every surface (menu bar strip, popover, sessions and cost windows) for the Claude
+# flag draws every surface (menu bar strip, popover, cost window) for the Claude
 # Code tab in light and dark mode, without touching your usage, transcripts or Keychain and
 # without any Screen Recording grant. Windows flash up for a few seconds while it runs.
 # Pass a directory to render somewhere else.

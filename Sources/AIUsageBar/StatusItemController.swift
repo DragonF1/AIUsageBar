@@ -12,7 +12,6 @@ final class StatusItemController: NSObject {
     private let monitor: QuotaMonitor
     private let item: NSStatusItem
     private let popover = NSPopover()
-    private let sessionsWindow: TokenWindowController
     private let costWindow: TokenWindowController
     private let antigravityCostWindow: TokenWindowController
     private let settingsWindow: SettingsWindowController
@@ -50,7 +49,6 @@ final class StatusItemController: NSObject {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         // A fixed autosave name makes macOS keep the spot the icon is Cmd-dragged to across relaunches.
         item.autosaveName = "AIUsageBarStatusItem"
-        sessionsWindow = .sessions(tokens: tokens)
         costWindow = .cost(ledger: tokens, autosaveName: "CostWindow")
         antigravityCostWindow = .cost(ledger: antigravityTokens, autosaveName: "AntigravityCostWindow")
         settingsWindow = .settings(monitor: monitor, usage: store, antigravity: antigravity)
@@ -61,7 +59,6 @@ final class StatusItemController: NSObject {
         let hosting = NSHostingController(rootView: PopoverView(store: store, antigravity: antigravity, status: status,
                                                                 antigravityStatus: antigravityStatus, tokens: tokens, antigravityTokens: antigravityTokens,
                                                                 monitor: monitor,
-                                                                onShowSessions: { [weak self] in self?.showSessions() },
                                                                 onShowCost: { [weak self] in self?.costWindow.show() },
                                                                 onShowAntigravityCost: { [weak self] in self?.antigravityCostWindow.show() },
                                                                 onShowSettings: { [weak self] in self?.showSettings() },
@@ -336,11 +333,6 @@ final class StatusItemController: NSObject {
                 Task { @MainActor in self?.closePopover() }
             }
         }
-    }
-
-    private func showSessions() {
-        closePopover()
-        sessionsWindow.show()
     }
 
     private func showSettings() {

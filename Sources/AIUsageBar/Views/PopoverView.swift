@@ -8,7 +8,6 @@ struct PopoverView: View {
     var tokens: TokenStore
     var antigravityTokens: AntigravityTokenStore
     var monitor: QuotaMonitor
-    var onShowSessions: () -> Void
     var onShowCost: () -> Void
     var onShowAntigravityCost: () -> Void
     var onShowSettings: () -> Void
@@ -74,7 +73,6 @@ struct PopoverView: View {
                 costSection(tokens,
                             week: TokenWindow.weekStart(resetsAt: store.usage?.weeklyResetsAt, now: now),
                             onShow: onShowCost)
-                sessionsButton
                 Divider()
                 StatusView(status: status, now: now)
             }
@@ -220,28 +218,6 @@ struct PopoverView: View {
         .buttonStyle(.plain)
         .accessibilityLabel("Cost")
         .help("Open a window with a bar per day for the last 7, 30 or 90 days and the split by model")
-    }
-
-    /// One line that opens the sessions window; the counts come from Claude Code's session registry.
-    private var sessionsButton: some View {
-        Button(action: onShowSessions) {
-            HStack(spacing: 6) {
-                Text("Sessions").font(.headline)
-                Spacer()
-                Text(sessionsSummary).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-                Image(systemName: "chevron.right").font(.caption2.weight(.semibold)).foregroundStyle(.tertiary)
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Sessions")
-        .help("Open a window listing every Claude Code session with its tokens and estimated cost")
-    }
-
-    private var sessionsSummary: String {
-        guard tokens.lastScanned != nil else { return "–" }
-        let open = "\(tokens.openCount) open"
-        return tokens.busyCount > 0 ? "\(open) · \(tokens.busyCount) busy" : open
     }
 
     private var footer: some View {

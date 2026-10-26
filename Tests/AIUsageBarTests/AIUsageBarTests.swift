@@ -1234,23 +1234,6 @@ func metaLine(_ type: String, session: String = "s", _ key: String, _ value: Str
     #"{"type":"\#(type)","\#(key)":"\#(value)","sessionId":"\#(session)"}"# + "\n"
 }
 
-/// One `~/.claude/sessions/<pid>.json` as Claude Code writes it.
-func registryEntry(pid: Int32, session: String, status: String = "idle", cwd: String = "/Users/sam",
-                   startedAt: Double = 1_789_754_103_203, updatedAt: Double = 1_789_762_570_826,
-                   kind: String = "interactive", name: String = "sam-39", nameSource: String = "derived") -> String {
-    #"{"pid":\#(pid),"sessionId":"\#(session)","cwd":"\#(cwd)","startedAt":\#(Int(startedAt)),"procStart":1,"version":"2.1.276","peerProtocol":1,"kind":"\#(kind)","entrypoint":"cli","pidDomain":"x","messagingSocketPath":"/tmp/cc-socks/\#(pid).sock","name":"\#(name)","nameSource":"\#(nameSource)","nameSince":1,"status":"\#(status)","updatedAt":\#(Int(updatedAt)),"statusUpdatedAt":\#(Int(updatedAt))}"#
-}
-
-func tempRegistryRoot(_ entries: [(Int32, String)]) throws -> URL {
-    let root = FileManager.default.temporaryDirectory.appendingPathComponent("cub-sessions-\(UUID().uuidString)", isDirectory: true)
-    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    for (pid, json) in entries {
-        try json.write(to: root.appendingPathComponent("\(pid).json"), atomically: true, encoding: .utf8)
-        try "k".write(to: root.appendingPathComponent("\(pid).abc.key"), atomically: true, encoding: .utf8)
-    }
-    return root
-}
-
 func userLine(ts: Date = Date(), text: String = "hi") -> String {
     #"{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"\#(text)"},"uuid":"\#(UUID().uuidString)","timestamp":"\#(iso(ts))","sessionId":"s","cwd":"/Users/sam"}"# + "\n"
 }
@@ -1828,104 +1811,6 @@ final class SessionScanTests: XCTestCase {
     }
 }
 
-final class SessionRegistryTests: XCTestCase {
-    func testLiveFiltersDeadProcessesAndOtherKinds() throws {
-        let root = try tempRegistryRoot([
-            (10, registryEntry(pid: 10, session: "alive-busy", status: "busy", name: "Renamed", nameSource: "user")),
-            (11, registryEntry(pid: 11, session: "alive-idle")),
-            (12, registryEntry(pid: 12, session: "dead")),
-            (13, registryEntry(pid: 13, session: "headless", kind: "headless")),
-        ])
-        try "not json".write(to: root.appendingPathComponent("14.json"), atomically: true, encoding: .utf8)
-        let registry = SessionRegistry(root: root) { $0 != 12 }
-        let live = registry.live().sorted { $0.pid < $1.pid }
-        XCTAssertEqual(live.map(\.sessionId), ["alive-busy", "alive-idle"])
-        XCTAssertTrue(live[0].isBusy)
-        XCTAssertFalse(live[1].isBusy)
-        XCTAssertEqual(live[0].userName, "Renamed")
-        XCTAssertNil(live[1].userName)
-        XCTAssertEqual(live[0].cwd, "/Users/sam")
-        XCTAssertEqual(live[0].started?.timeIntervalSince1970 ?? 0, 1_789_754_103.203, accuracy: 0.01)
-    }
-
-    func testDuplicateSessionKeepsNewestEntry() throws {
-        let root = try tempRegistryRoot([
-            (20, registryEntry(pid: 20, session: "same", status: "idle", updatedAt: 1000)),
-            (21, registryEntry(pid: 21, session: "same", status: "busy", updatedAt: 2000)),
-        ])
-        let live = SessionRegistry(root: root) { _ in true }.live()
-        XCTAssertEqual(live.count, 1)
-        XCTAssertEqual(live[0].pid, 21)
-    }
-
-    func testMissingRootIsEmpty() {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent("cub-none-\(UUID().uuidString)")
-        XCTAssertEqual(SessionRegistry(root: root) { _ in true }.live(), [])
-    }
-}
-
-final class SessionRowTests: XCTestCase {
-    @MainActor
-    func testRowsJoinRegistryAndTranscriptsInOrder() async throws {
-        let root = try tempTranscriptRoot()
-        let now = Date()
-        let earlier = now.addingTimeInterval(-3600)
-        let yesterday = TokenWindow.todayStart(now: now).addingTimeInterval(-3600)
-        try writeTranscript(root, "p/busy.jsonl",
-            metaLine("ai-title", session: "busy", "aiTitle", "Busy one")
-            + assistantLine(id: "m1", ts: earlier, in: 100, out: 0, session: "busy"))
-        try writeTranscript(root, "p/idle-new.jsonl", assistantLine(id: "m2", ts: now, in: 10, out: 0, session: "idle-new"))
-        try writeTranscript(root, "p/idle-old.jsonl", assistantLine(id: "m3", ts: earlier, in: 20, out: 0, session: "idle-old"))
-        try writeTranscript(root, "p/closed.jsonl",
-            metaLine("last-prompt", session: "closed", "lastPrompt", "fix the tests")
-            + assistantLine(id: "m4", ts: now.addingTimeInterval(-120), in: 30, out: 0, session: "closed"))
-        try writeTranscript(root, "p/stale.jsonl", assistantLine(id: "m5", ts: yesterday, in: 40, out: 0, session: "stale"))
-        let registry = try tempRegistryRoot([
-            (1, registryEntry(pid: 1, session: "idle-old")),
-            (2, registryEntry(pid: 2, session: "busy", status: "busy")),
-            (3, registryEntry(pid: 3, session: "idle-new")),
-            // Never answered, so its last activity is the registry write: two hours ago, behind "busy".
-            (4, registryEntry(pid: 4, session: "fresh", status: "busy",
-                              updatedAt: now.addingTimeInterval(-7200).timeIntervalSince1970 * 1000,
-                              name: "Fresh", nameSource: "user")),
-        ])
-
-        let store = TokenStore()
-        store.scanner = TokenScanner(root: root, cacheURL: nil)
-        store.registry = SessionRegistry(root: registry) { _ in true }
-        await store.refresh(reason: "test")
-        XCTAssertEqual(store.openCount, 4)
-        XCTAssertEqual(store.busyCount, 2)
-
-        let rows = store.sessionRows(closedSince: TokenWindow.todayStart(now: now))
-        XCTAssertEqual(rows.map(\.id), ["busy", "fresh", "idle-new", "idle-old", "closed"])
-        XCTAssertEqual(rows.map(\.isOpen), [true, true, true, true, false])
-        XCTAssertEqual(rows[0].title, "Busy one")
-        XCTAssertEqual(rows[0].totals.tokens, 100)
-        XCTAssertEqual(rows[1].title, "Fresh")
-        XCTAssertEqual(rows[1].totals.tokens, 0)
-        XCTAssertEqual(rows[2].title, "idle-new")
-        XCTAssertEqual(rows[4].title, "fix the tests")
-        XCTAssertEqual(rows[4].totals.tokens, 30)
-        XCTAssertNotNil(rows[1].started, "a session that has not answered yet dates from its process start")
-    }
-
-    func testTextHelpers() {
-        XCTAssertEqual(SessionText.folder("/Users/sam/Coding/proj", home: "/Users/sam"), "~/Coding/proj")
-        XCTAssertEqual(SessionText.folder("/Users/sam", home: "/Users/sam"), "~")
-        XCTAssertEqual(SessionText.folder("/Volumes/Storage/Coding/proj", home: "/Users/sam"), "Coding/proj")
-        let now = Date()
-        XCTAssertEqual(SessionText.duration(from: now.addingTimeInterval(-90), to: now), "1m")
-        XCTAssertEqual(SessionText.duration(from: now.addingTimeInterval(-(2 * 3600 + 14 * 60)), to: now), "2h 14m")
-        XCTAssertEqual(SessionText.duration(from: now.addingTimeInterval(-(86400 + 3 * 3600)), to: now), "1d 3h")
-        XCTAssertEqual(SessionText.ago(now.addingTimeInterval(-5), now: now), "just now")
-        XCTAssertEqual(SessionText.ago(now.addingTimeInterval(-300), now: now), "5m ago")
-        XCTAssertEqual(SessionText.ago(now.addingTimeInterval(-7200), now: now), "2h ago")
-        XCTAssertEqual(SessionColor.color(named: "pink"), .pink)
-        XCTAssertEqual(SessionColor.color(named: nil), .secondary)
-    }
-}
-
 final class TokenStoreTests: XCTestCase {
     @MainActor
     func testRefreshPopulatesAndReportsMissingRoot() async throws {
@@ -1933,7 +1818,6 @@ final class TokenStoreTests: XCTestCase {
         try writeTranscript(root, "p/s.jsonl", assistantLine(id: "msg_1", in: 10, out: 10) + assistantLine(id: "msg_2", in: 20, out: 20))
         let store = TokenStore()
         store.scanner = TokenScanner(root: root, cacheURL: nil)
-        store.registry = SessionRegistry(root: root) { _ in true }
         XCTAssertNil(store.lastScanned)
 
         await store.refresh(reason: "test")
@@ -1955,92 +1839,17 @@ final class TokenStoreTests: XCTestCase {
     }
 }
 
-// MARK: - Session launcher
+// MARK: - App config file
 
-/// Records every command the launcher would run and answers from a script of stdout strings.
-final class FakeRunner: @unchecked Sendable {
-    var commands: [SessionLauncher.Command] = []
-    var replies: [String]
-
-    init(replies: [String] = []) { self.replies = replies }
-
-    func run(_ command: SessionLauncher.Command) async throws -> String {
-        commands.append(command)
-        return replies.isEmpty ? "" : replies.removeFirst()
-    }
-}
-
-final class SessionLauncherTests: XCTestCase {
-    private func launcher(existing: Set<String>, runner: FakeRunner, configured: Bool = true) -> SessionLauncher {
-        var launcher = SessionLauncher(settings: configured
-            ? AppConfig.Settings.Resume(launcher: "/l/launch-claude.sh", envFile: "/l/launcher.env") : nil)
-        launcher.fileExists = { existing.contains($0) }
-        launcher.run = { try await runner.run($0) }
-        return launcher
-    }
-
-    private func closedRow(id: String = "abc-123", cwd: String? = "/work", color: String? = "cyan") -> SessionRow {
-        var meta = SessionMeta(sessionId: id, firstSeen: .distantFuture, lastSeen: .distantPast)
-        meta.cwd = cwd
-        meta.color = color
-        return SessionRow(id: id, live: nil, meta: meta, totals: TokenTotals())
-    }
-
-    private func openRow(pid: Int32, id: String = "open-1") -> SessionRow {
-        SessionRow(id: id, live: LiveSession(pid: pid, sessionId: id, cwd: "/work"), meta: nil, totals: TokenTotals())
-    }
-
-    /// Without a config file, Terminal gets a new window running `claude --resume` in the
-    /// session's folder. No colour is passed: Claude Code restores the session's own colour.
-    func testResumeWithoutConfigOpensTerminalOnClaudeResume() async throws {
-        let runner = FakeRunner()
-        let launcher = launcher(existing: ["/work"], runner: runner, configured: false)
-        try await launcher.resume(closedRow(color: "cyan"))
-        XCTAssertEqual(runner.commands, [SessionLauncher.Command(
-            executable: "/usr/bin/osascript",
-            arguments: ["-e", "tell application \"Terminal\"\ndo script \"cd '/work' && claude --resume 'abc-123'\"\nactivate\nend tell"])])
-    }
-
-    func testTerminalScriptEscapesShellAndAppleScriptQuoting() {
-        // Shell: single quotes, with ' as '\''. AppleScript: backslashes and double quotes escaped.
-        let script = SessionLauncher.terminalScript(cwd: "/it's \"here\"", sessionId: "id")
-        let lines = script.components(separatedBy: "\n")
-        XCTAssertEqual(lines.count, 4)
-        XCTAssertEqual(lines[0], "tell application \"Terminal\"")
-        XCTAssertEqual(lines[1], #"do script "cd '/it'\\''s \"here\"' && claude --resume 'id'""#)
-        XCTAssertEqual(lines[2], "activate")
-        XCTAssertEqual(lines[3], "end tell")
-    }
-
-    /// A configured launcher gets the env file exported, then the script exec'd, with the session
-    /// and its folder in the environment and nothing else.
-    func testResumeWithConfiguredLauncherExportsEnvFileThenExecsIt() async throws {
-        let runner = FakeRunner()
-        let launcher = launcher(existing: ["/work", "/l/launcher.env", "/l/launch-claude.sh"], runner: runner)
-        try await launcher.resume(closedRow(color: "cyan"))
-        XCTAssertEqual(runner.commands, [SessionLauncher.Command(
-            executable: "/bin/bash",
-            arguments: ["-c", "set -a; [ -f '/l/launcher.env' ] && . '/l/launcher.env'; set +a; exec '/l/launch-claude.sh'"],
-            environment: ["CLAUDE_RESUME": "abc-123", "CLAUDE_LAUNCH_DIR": "/work"])])
-    }
-
-    func testConfiguredLauncherWithoutEnvFileJustExecs() throws {
-        var launcher = SessionLauncher(settings: AppConfig.Settings.Resume(launcher: "/l/go.sh"))
-        launcher.fileExists = { _ in true }
-        XCTAssertEqual(try launcher.resumeCommand(sessionId: "abc", cwd: "/work").arguments, ["-c", "exec '/l/go.sh'"])
-    }
-
+final class AppConfigFileTests: XCTestCase {
     func testConfigFileDecodesSnakeCaseAndExpandsTilde() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("cfg-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let file = dir.appendingPathComponent("config.json")
-        try #"{"resume": {"launcher": "~/bin/go.sh", "env_file": "~/bin/go.env"}}"#.write(to: file, atomically: true, encoding: .utf8)
+        try #"{"notifications": {"thresholds": [85, 95]}}"#.write(to: file, atomically: true, encoding: .utf8)
         let settings = AppConfig.loadSettings(from: file)
-        XCTAssertEqual(settings.resume, AppConfig.Settings.Resume(launcher: "~/bin/go.sh", envFile: "~/bin/go.env"))
-        let launcher = SessionLauncher(settings: settings.resume)
-        XCTAssertEqual(launcher.launcher?.path, NSHomeDirectory() + "/bin/go.sh")
-        XCTAssertEqual(launcher.envFile?.path, NSHomeDirectory() + "/bin/go.env")
+        XCTAssertEqual(settings.notificationThresholds, [85, 95])
         XCTAssertEqual(AppConfig.loadSettings(from: dir.appendingPathComponent("missing.json")), AppConfig.Settings())
         XCTAssertNil(AppConfig.loadAntigravityClient(from: dir.appendingPathComponent("missing.json")))
         let client = dir.appendingPathComponent("antigravity-client.json")
@@ -2048,130 +1857,6 @@ final class SessionLauncherTests: XCTestCase {
         XCTAssertEqual(AppConfig.loadAntigravityClient(from: client), AppConfig.OAuthClient(clientId: "cid", clientSecret: "cs"))
         try #"{"client_id": "", "client_secret": "cs"}"#.write(to: client, atomically: true, encoding: .utf8)
         XCTAssertNil(AppConfig.loadAntigravityClient(from: client))
-    }
-
-    /// The real thing: an env file with EFFORT=xhigh must reach the launcher as an exported variable.
-    func testResumeScriptExportsEnvFileToTheLauncher() async throws {
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("launcher-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: dir) }
-        try "# comment\nEFFORT=xhigh\n".write(to: dir.appendingPathComponent("launcher.env"), atomically: true, encoding: .utf8)
-        let fake = dir.appendingPathComponent("launch-claude.sh")
-        try "#!/bin/bash\nprintf '%s|%s|%s|%s' \"$EFFORT\" \"$CLAUDE_RESUME\" \"$CLAUDE_LAUNCH_DIR\" \"${CLAUDE_LAUNCH_COLOR-unset}\"\n"
-            .write(to: fake, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: fake.path)
-        let launcher = SessionLauncher(settings: AppConfig.Settings.Resume(
-            launcher: fake.path, envFile: dir.appendingPathComponent("launcher.env").path))
-        let output = try await launcher.run(try launcher.resumeCommand(sessionId: "abc", cwd: dir.path))
-        XCTAssertEqual(output, "xhigh|abc|\(dir.path)|unset")
-    }
-
-    func testShellQuoting() {
-        XCTAssertEqual(SessionLauncher.quoted("/a b/c"), "'/a b/c'")
-        XCTAssertEqual(SessionLauncher.quoted("/it's"), "'/it'\\''s'")
-    }
-
-    func testResumeRefusesMissingFolderOrLauncher() {
-        let none = launcher(existing: ["/work", "/l/launcher.env"], runner: FakeRunner())
-        XCTAssertThrowsError(try none.resumeCommand(sessionId: "abc", cwd: "/work")) {
-            XCTAssertEqual($0 as? SessionLauncher.Failure, .noLauncher("/l/launch-claude.sh"))
-        }
-        let gone = launcher(existing: ["/l/launch-claude.sh"], runner: FakeRunner())
-        XCTAssertThrowsError(try gone.resumeCommand(sessionId: "abc", cwd: "/gone")) {
-            XCTAssertEqual($0 as? SessionLauncher.Failure, .noWorkingDirectory("/gone"))
-        }
-        XCTAssertThrowsError(try gone.resumeCommand(sessionId: "abc", cwd: nil)) {
-            XCTAssertEqual($0 as? SessionLauncher.Failure, .noWorkingDirectory(nil))
-        }
-    }
-
-    func testFocusLooksUpTTYThenRaisesTerminalWindow() async throws {
-        let runner = FakeRunner(replies: ["ttys004\n", "ok\n"])
-        let launcher = launcher(existing: [], runner: runner)
-        try await launcher.focus(openRow(pid: 4242))
-        XCTAssertEqual(runner.commands.count, 2)
-        XCTAssertEqual(runner.commands[0].executable, "/bin/ps")
-        XCTAssertEqual(runner.commands[0].arguments, ["-o", "tty=", "-p", "4242"])
-        XCTAssertEqual(runner.commands[1].executable, "/usr/bin/osascript")
-        XCTAssertEqual(runner.commands[1].arguments.first, "-e")
-        XCTAssertTrue(runner.commands[1].arguments[1].contains("if tty of t is \"/dev/ttys004\""))
-        XCTAssertTrue(runner.commands[1].arguments[1].contains("tell application \"Terminal\""))
-    }
-
-    func testFocusReportsNoTerminalAndNoTTY() async {
-        let missing = launcher(existing: [], runner: FakeRunner(replies: ["ttys004\n", "none\n"]))
-        do {
-            try await missing.focus(openRow(pid: 7))
-            XCTFail("expected noTerminalWindow")
-        } catch {
-            XCTAssertEqual(error as? SessionLauncher.Failure, .noTerminalWindow(7, "/dev/ttys004"))
-        }
-        let headless = launcher(existing: [], runner: FakeRunner(replies: ["??\n"]))
-        do {
-            try await headless.focus(openRow(pid: 8))
-            XCTFail("expected noTTY")
-        } catch {
-            XCTAssertEqual(error as? SessionLauncher.Failure, .noTTY(8))
-        }
-    }
-
-    /// Inside tmux claude's tty is a pane, so no Terminal tab matches it; the tab attached to the
-    /// pane's tmux session is raised instead.
-    func testFocusInsideTmuxRaisesTheAttachedClientsTab() async throws {
-        let tmux = "/opt/homebrew/bin/tmux"
-        let runner = FakeRunner(replies: [
-            "ttys012\n", "none\n",
-            "/dev/ttys003\tother\n/dev/ttys012\tc-claude-work 1\n",
-            "/dev/ttys020\n/dev/ttys021\n", "none\n", "ok\n",
-        ])
-        try await launcher(existing: [tmux], runner: runner).focus(openRow(pid: 9))
-        XCTAssertEqual(runner.commands.count, 6)
-        XCTAssertEqual(runner.commands[2], SessionLauncher.Command(
-            executable: tmux, arguments: ["list-panes", "-a", "-F", "#{pane_tty}\t#{session_name}"]))
-        XCTAssertEqual(runner.commands[3], SessionLauncher.Command(
-            executable: tmux, arguments: ["list-clients", "-t", "=c-claude-work 1", "-F", "#{client_tty}"]))
-        XCTAssertTrue(runner.commands[4].arguments[1].contains("if tty of t is \"/dev/ttys020\""))
-        XCTAssertTrue(runner.commands[5].arguments[1].contains("if tty of t is \"/dev/ttys021\""))
-    }
-
-    /// A tmux session nobody is attached to gets a new Terminal window attached to it, never a
-    /// second `claude --resume`, which would fork the conversation.
-    func testFocusInsideTmuxWithoutClientAttachesANewWindow() async throws {
-        let tmux = "/usr/local/bin/tmux"
-        let runner = FakeRunner(replies: ["ttys012\n", "none\n", "/dev/ttys012\tc-it's\n", ""])
-        try await launcher(existing: [tmux], runner: runner).focus(openRow(pid: 9))
-        XCTAssertEqual(runner.commands.count, 5)
-        XCTAssertEqual(runner.commands[4], SessionLauncher.Command(
-            executable: "/usr/bin/osascript",
-            arguments: ["-e", #"tell application "Terminal""# + "\n"
-                + #"do script "'/usr/local/bin/tmux' attach-session -t '=c-it'\\''s'""# + "\nactivate\nend tell"]))
-    }
-
-    func testFocusOutsideAnyTmuxPaneStillReportsNoTerminal() async {
-        let runner = FakeRunner(replies: ["ttys004\n", "none\n", "/dev/ttys012\tc-x\n"])
-        do {
-            try await launcher(existing: ["/opt/homebrew/bin/tmux"], runner: runner).focus(openRow(pid: 7))
-            XCTFail("expected noTerminalWindow")
-        } catch {
-            XCTAssertEqual(error as? SessionLauncher.Failure, .noTerminalWindow(7, "/dev/ttys004"))
-        }
-        XCTAssertEqual(runner.commands.count, 3)
-    }
-
-    func testTmuxSessionParsing() {
-        let panes = "/dev/ttys001\ta\n/dev/ttys0012\tb\n/dev/ttys002\tname\twith tab\nbroken\n"
-        XCTAssertEqual(SessionLauncher.tmuxSession(tty: "/dev/ttys001", panes: panes), "a")
-        XCTAssertEqual(SessionLauncher.tmuxSession(tty: "/dev/ttys002", panes: panes), "name\twith tab")
-        XCTAssertNil(SessionLauncher.tmuxSession(tty: "/dev/ttys00", panes: panes))
-        XCTAssertNil(SessionLauncher.tmuxSession(tty: "/dev/ttys001", panes: ""))
-    }
-
-    func testTTYParsing() {
-        XCTAssertEqual(SessionLauncher.tty(fromPS: "ttys000\n"), "/dev/ttys000")
-        XCTAssertEqual(SessionLauncher.tty(fromPS: "  ttys12 "), "/dev/ttys12")
-        XCTAssertNil(SessionLauncher.tty(fromPS: "??\n"))
-        XCTAssertNil(SessionLauncher.tty(fromPS: ""))
-        XCTAssertNil(SessionLauncher.tty(fromPS: "tty\"s0"))
     }
 }
 

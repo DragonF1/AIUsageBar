@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// One floating window over a token ledger (the sessions list or a cost report), kept around
+/// One floating window over a token ledger (a cost report), kept around
 /// between showings; refreshes the ledger every 15 s while it is on screen (the scanners are
 /// incremental, so that is a few file stats).
 @MainActor
@@ -24,16 +24,6 @@ final class TokenWindowController {
         self.size = size
         self.autosaveName = autosaveName
         self.makeView = makeView
-    }
-
-    /// Every Claude Code session with its tokens and cost, with Show / Resume per row.
-    static func sessions(tokens: TokenStore) -> TokenWindowController {
-        TokenWindowController(ledger: tokens, title: "Claude Code Sessions",
-                              size: NSSize(width: 660, height: 380), autosaveName: "SessionsWindow") { controller in
-            AnyView(SessionsView(tokens: tokens,
-                                 onRefresh: { [weak controller] in controller?.refresh() },
-                                 onOpened: { [weak controller] in controller?.close() }))
-        }
     }
 
     /// Today and the last 30 days, a bar per day, and the split by model, for one ledger.

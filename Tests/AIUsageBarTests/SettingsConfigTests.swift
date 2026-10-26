@@ -143,7 +143,7 @@ final class ClaudeFolderTests: XCTestCase {
         XCTAssertEqual(try store.read().source, .file(file))
     }
 
-    /// The token store rebuilds its scanner and registry when the setting changes, with no restart.
+    /// The token store rebuilds its scanner when the setting changes, with no restart.
     @MainActor
     func testTokenStoreFollowsTheFolderSetting() async throws {
         let first = try scratchDirectory(self)
@@ -151,12 +151,6 @@ final class ClaudeFolderTests: XCTestCase {
         for (dir, session, id) in [(first, "one", "m1"), (second, "two", "m2")] {
             try writeTranscript(dir.appendingPathComponent("projects"), "p/\(session).jsonl",
                                 assistantLine(id: id, in: 10, out: 10, session: session))
-            try registryEntry(pid: getpid(), session: session).write(
-                to: { () -> URL in
-                    let sessions = dir.appendingPathComponent("sessions")
-                    try? FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
-                    return sessions.appendingPathComponent("\(getpid()).json")
-                }(), atomically: true, encoding: .utf8)
         }
         let support = try scratchDirectory(self)
         var current = first.path
@@ -165,12 +159,10 @@ final class ClaudeFolderTests: XCTestCase {
 
         await store.refresh(reason: "test")
         XCTAssertEqual(store.records.map(\.sessionId), ["one"])
-        XCTAssertEqual(store.live.map(\.sessionId), ["one"])
 
         current = second.path
         await store.refresh(reason: "test")
         XCTAssertEqual(store.records.map(\.sessionId), ["two"])
-        XCTAssertEqual(store.live.map(\.sessionId), ["two"])
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.folder().tokenCacheURL.path),
                       "the second folder scans into a cache of its own")
     }
@@ -321,178 +313,3 @@ final class AntigravityClientStoreTests: XCTestCase {
     }
 }
 
-// MARK: - Resume
-
-final class ResumeSettingsTests: XCTestCase {
-    private let named = AppConfig.Settings.Resume(launcher: "~/.claude-launcher/launch-claude.sh", envFile: "~/.claude-launcher/raycast.env")
-
-    func testNothingSavedAndNoConfigIsTheTerminalWindow() {
-        let settings = ResumeSettings.effective(defaults: scratchSuite(self), config: nil)
-        XCTAssertEqual(settings, ResumeSettings(mode: .terminal, launcher: "", envFile: "", extraArguments: ""))
-    }
-
-    /// The owner's case: config.json names a launcher, Settings has never been touched.
-    func testConfigJSONSuppliesTheLauncherAndPicksTheCustomMode() {
-        let settings = ResumeSettings.effective(defaults: scratchSuite(self), config: named)
-        XCTAssertEqual(settings.mode, .launcher)
-        XCTAssertEqual(settings.launcher, "~/.claude-launcher/launch-claude.sh")
-        XCTAssertEqual(settings.envFile, "~/.claude-launcher/raycast.env")
-    }
-
-    func testAConfigWithoutALauncherStaysOnTerminal() {
-        XCTAssertEqual(ResumeSettings.effective(defaults: scratchSuite(self), config: .init(launcher: nil, envFile: "x.env")).mode, .terminal)
-        XCTAssertEqual(ResumeSettings.effective(defaults: scratchSuite(self), config: .init(launcher: "", envFile: nil)).mode, .terminal)
-    }
-
-    func testSavedValuesWinOverConfigJSON() {
-        let suite = scratchSuite(self)
-        suite.set("terminal", forKey: Preferences.Key.resumeMode)
-        suite.set("/mine/go.sh", forKey: Preferences.Key.resumeLauncher)
-        suite.set("/mine/go.env", forKey: Preferences.Key.resumeEnvFile)
-        suite.set("--effort xhigh", forKey: Preferences.Key.resumeExtraArguments)
-        let settings = ResumeSettings.effective(defaults: suite, config: named)
-        XCTAssertEqual(settings, ResumeSettings(mode: .terminal, launcher: "/mine/go.sh", envFile: "/mine/go.env", extraArguments: "--effort xhigh"))
-    }
-
-    /// Each value falls back on its own: saving one field does not hide the others in config.json.
-    func testEachValueFallsBackIndependently() {
-        let suite = scratchSuite(self)
-        suite.set("/mine/go.sh", forKey: Preferences.Key.resumeLauncher)
-        let settings = ResumeSettings.effective(defaults: suite, config: named)
-        XCTAssertEqual(settings.mode, .launcher)
-        XCTAssertEqual(settings.launcher, "/mine/go.sh")
-        XCTAssertEqual(settings.envFile, "~/.claude-launcher/raycast.env")
-    }
-
-    /// A deliberately cleared field is a saved value: it does not resurrect config.json's.
-    func testAClearedFieldStaysCleared() {
-        let suite = scratchSuite(self)
-        suite.set("", forKey: Preferences.Key.resumeEnvFile)
-        XCTAssertEqual(ResumeSettings.effective(defaults: suite, config: named).envFile, "")
-    }
-
-    func testAnUnknownSavedModeFallsBackToTheDerivedOne() {
-        let suite = scratchSuite(self)
-        suite.set("tmux", forKey: Preferences.Key.resumeMode)
-        XCTAssertEqual(ResumeSettings.effective(defaults: suite, config: named).mode, .launcher)
-        XCTAssertEqual(ResumeSettings.effective(defaults: suite, config: nil).mode, .terminal)
-    }
-
-    func testModeTitles() {
-        XCTAssertEqual(ResumeMode.allCases.map(\.title), ["Terminal window", "Custom launcher script"])
-    }
-
-    func testPreferencesSetNilRemovesTheSavedValue() {
-        let original = Preferences.defaults
-        let suite = scratchSuite(self)
-        Preferences.defaults = suite
-        defer { Preferences.defaults = original }
-        Preferences.resumeMode = .launcher
-        Preferences.resumeLauncher = "/x.sh"
-        XCTAssertEqual(suite.string(forKey: Preferences.Key.resumeMode), "launcher")
-        Preferences.resumeMode = nil
-        Preferences.resumeLauncher = nil
-        XCTAssertNil(suite.object(forKey: Preferences.Key.resumeMode))
-        XCTAssertNil(suite.object(forKey: Preferences.Key.resumeLauncher))
-    }
-}
-
-final class SessionLauncherSettingsTests: XCTestCase {
-    private func launcher(_ resume: ResumeSettings, folder: String = "", existing: Set<String> = ["/work"]) -> SessionLauncher {
-        var launcher = SessionLauncher(resume: resume, folder: ClaudeFolder(configured: folder, home: "/Users/test"))
-        launcher.fileExists = { existing.contains($0) }
-        return launcher
-    }
-
-    private func script(_ launcher: SessionLauncher) throws -> String {
-        let command = try launcher.resumeCommand(sessionId: "abc-123", cwd: "/work")
-        XCTAssertEqual(command.executable, "/usr/bin/osascript")
-        return try XCTUnwrap(command.arguments.last)
-    }
-
-    private func terminal(_ extra: String = "") -> ResumeSettings {
-        ResumeSettings(mode: .terminal, launcher: "", envFile: "", extraArguments: extra)
-    }
-
-    func testTerminalAppendsTheExtraArgumentsAfterResume() throws {
-        XCTAssertEqual(try script(launcher(terminal("--effort xhigh"))),
-                       "tell application \"Terminal\"\ndo script \"cd '/work' && claude --resume 'abc-123' --effort xhigh\"\nactivate\nend tell")
-    }
-
-    func testBlankExtraArgumentsAppendNothing() throws {
-        let plain = try script(launcher(terminal()))
-        XCTAssertEqual(plain, "tell application \"Terminal\"\ndo script \"cd '/work' && claude --resume 'abc-123'\"\nactivate\nend tell")
-        XCTAssertEqual(try script(launcher(terminal("  \t "))), plain)
-        XCTAssertEqual(try script(launcher(terminal("\n"))), plain)
-    }
-
-    func testExtraArgumentsAreTrimmedAndKeptOnOneLine() throws {
-        XCTAssertTrue(try script(launcher(terminal("  --effort xhigh \n --verbose "))).contains("'abc-123' --effort xhigh   --verbose\""))
-    }
-
-    /// Raw shell text stays raw for the shell, but cannot break out of the AppleScript string.
-    func testExtraArgumentsCannotBreakTheAppleScriptString() throws {
-        let text = try script(launcher(terminal(#"--append-system-prompt "say \"hi\"" --x 'y'"#)))
-        let line = try XCTUnwrap(text.components(separatedBy: "\n").dropFirst().first)
-        XCTAssertEqual(line, #"do script "cd '/work' && claude --resume 'abc-123' --append-system-prompt \"say \\\"hi\\\"\" --x 'y'""#)
-        XCTAssertEqual(text.components(separatedBy: "\n").count, 4)
-        XCTAssertTrue(try script(launcher(terminal(#"a\b"#))).contains(#"a\\b"#))
-    }
-
-    func testCustomFolderPrefixesTheEnvironmentVariableBeforeClaude() throws {
-        XCTAssertEqual(try script(launcher(terminal("--effort high"), folder: "~/work/.claude/")),
-                       "tell application \"Terminal\"\ndo script \"cd '/work' && CLAUDE_CONFIG_DIR='/Users/test/work/.claude' claude --resume 'abc-123' --effort high\"\nactivate\nend tell")
-        XCTAssertFalse(try script(launcher(terminal(), folder: "~/.claude")).contains("CLAUDE_CONFIG_DIR"))
-        XCTAssertFalse(try script(launcher(terminal(), folder: "")).contains("CLAUDE_CONFIG_DIR"))
-    }
-
-    func testFolderWithAQuoteIsShellQuotedInsideTheAppleScript() throws {
-        XCTAssertTrue(try script(launcher(terminal(), folder: "/it's \"x\"")).contains(#"CLAUDE_CONFIG_DIR='/it'\\''s \"x\"' claude"#))
-    }
-
-    func testLauncherModeAddsTheFolderToTheEnvironmentOnlyWhenCustom() throws {
-        let resume = ResumeSettings(mode: .launcher, launcher: "/l/go.sh", envFile: "/l/go.env", extraArguments: "--ignored")
-        let existing: Set<String> = ["/work", "/l/go.sh"]
-        let plain = try launcher(resume, existing: existing).resumeCommand(sessionId: "abc", cwd: "/work")
-        XCTAssertEqual(plain.executable, "/bin/bash")
-        XCTAssertEqual(plain.arguments, ["-c", "set -a; [ -f '/l/go.env' ] && . '/l/go.env'; set +a; exec '/l/go.sh'"])
-        XCTAssertEqual(plain.environment, ["CLAUDE_RESUME": "abc", "CLAUDE_LAUNCH_DIR": "/work"])
-
-        let custom = try launcher(resume, folder: "/opt/cc/", existing: existing).resumeCommand(sessionId: "abc", cwd: "/work")
-        XCTAssertEqual(custom.arguments, plain.arguments, "extra arguments belong to the Terminal mode only")
-        XCTAssertEqual(custom.environment, ["CLAUDE_RESUME": "abc", "CLAUDE_LAUNCH_DIR": "/work", "CLAUDE_CONFIG_DIR": "/opt/cc"])
-    }
-
-    func testLauncherModeExpandsTildesAndNeedsAnExistingScript() throws {
-        let resume = ResumeSettings(mode: .launcher, launcher: "~/bin/go.sh", envFile: "", extraArguments: "")
-        XCTAssertEqual(launcher(resume).launcher?.path, NSHomeDirectory() + "/bin/go.sh")
-        XCTAssertThrowsError(try launcher(resume).resumeCommand(sessionId: "abc", cwd: "/work")) {
-            XCTAssertEqual($0 as? SessionLauncher.Failure, .noLauncher(NSHomeDirectory() + "/bin/go.sh"))
-        }
-    }
-
-    func testLauncherModeWithNoScriptSetReportsThatInsteadOfFallingBack() {
-        let resume = ResumeSettings(mode: .launcher, launcher: "", envFile: "", extraArguments: "")
-        XCTAssertThrowsError(try launcher(resume).resumeCommand(sessionId: "abc", cwd: "/work")) {
-            XCTAssertEqual($0 as? SessionLauncher.Failure, .noLauncher(""))
-            XCTAssertTrue(($0 as? LocalizedError)?.errorDescription?.contains("Settings") == true)
-        }
-    }
-
-    /// The public initialiser reads Settings first and config.json second, the way the sessions window does.
-    func testInitialiserFollowsSettingsThenConfigJSON() {
-        let suite = scratchSuite(self)
-        let config = AppConfig.Settings.Resume(launcher: "/l/launch-claude.sh", envFile: "/l/launcher.env")
-        var launcher = SessionLauncher(settings: config, defaults: suite)
-        XCTAssertEqual(launcher.mode, .launcher)
-        XCTAssertEqual(launcher.launcher?.path, "/l/launch-claude.sh")
-
-        suite.set("terminal", forKey: Preferences.Key.resumeMode)
-        suite.set("--effort xhigh", forKey: Preferences.Key.resumeExtraArguments)
-        suite.set("/opt/cc", forKey: Preferences.Key.claudeFolder)
-        launcher = SessionLauncher(settings: config, defaults: suite)
-        XCTAssertEqual(launcher.mode, .terminal)
-        XCTAssertEqual(launcher.extraArguments, "--effort xhigh")
-        XCTAssertEqual(launcher.claudeConfigDir, "/opt/cc")
-    }
-}

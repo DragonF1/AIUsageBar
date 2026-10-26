@@ -78,9 +78,6 @@ enum ScreenshotRenderer {
         installDefaults(tab: tab)
         try write(menuBar(stores, tab: tab, clock: fixture.clock, appearance: appearance), "menubar-\(tab.rawValue)")
         try write(try await popover(stores, appearance: appearance), "popover-\(tab.rawValue)")
-        try write(try await window(AnyView(SessionsView(tokens: stores.tokens, onRefresh: {}, onOpened: {})),
-                                   title: "Claude Code Sessions", size: NSSize(width: 660, height: 380),
-                                   appearance: appearance), "sessions")
         try write(try await window(AnyView(CostView(tokens: stores.tokens, onRefresh: {})),
                                    title: "\(TokenProduct.claudeCode.name) Cost", size: NSSize(width: 520, height: 520),
                                    appearance: appearance), "cost-claude")
@@ -139,7 +136,7 @@ enum ScreenshotRenderer {
             await status.refresh()
             await antigravityStatus.refresh()
             tokens = TokenStore()
-            tokens.adopt(records: fixture.claudeRecords, sessions: fixture.claudeSessions, live: fixture.claudeLive, at: fixture.now)
+            tokens.adopt(records: fixture.claudeRecords, at: fixture.now)
             antigravityTokens = AntigravityTokenStore()
             antigravityTokens.adopt(records: fixture.antigravityRecords, at: fixture.now)
         }
@@ -200,7 +197,7 @@ enum ScreenshotRenderer {
         let view = PopoverView(store: s.usage, antigravity: s.antigravity, status: s.status,
                                antigravityStatus: s.antigravityStatus, tokens: s.tokens,
                                antigravityTokens: s.antigravityTokens, monitor: s.monitor,
-                               onShowSessions: {}, onShowCost: {}, onShowAntigravityCost: {}, onShowSettings: {}, onQuit: {})
+                               onShowCost: {}, onShowAntigravityCost: {}, onShowSettings: {}, onQuit: {})
         let hosting = NSHostingController(rootView: view)
         hosting.sizingOptions = [.preferredContentSize]
         // Key, like the real popover: an inactive window draws the progress bars grey.
@@ -477,18 +474,6 @@ struct ScreenshotFixture {
                         cwd: folder("dotfiles"), gitBranch: "main", slug: "zsh-prompt",
                         firstSeen: at(5 * 3600), lastSeen: at(2 * 3600)),
         ]
-    }
-
-    var claudeLive: [LiveSession] {
-        let ids = Self.todayIds
-        func live(_ id: String, pid: Int32, busy: Bool, ago: TimeInterval, project: String) -> LiveSession {
-            LiveSession(pid: pid, sessionId: id, cwd: folder(project),
-                        startedAt: now.addingTimeInterval(-ago).timeIntervalSince1970 * 1000, kind: "interactive",
-                        status: busy ? "busy" : "idle", name: nil, nameSource: nil, version: "2.1.277",
-                        updatedAt: now.timeIntervalSince1970 * 1000)
-        }
-        return [live(ids[0], pid: 41231, busy: true, ago: 100 * 60, project: "aurora-web"),
-                live(ids[1], pid: 41877, busy: false, ago: 3 * 3600, project: "ledger-api")]
     }
 
     /// Thirty days of Claude Code answers: lighter at weekends, Opus most of the time.

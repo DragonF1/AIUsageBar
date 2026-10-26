@@ -8,10 +8,6 @@ final class TokenStore: TokenLedger {
     var product: TokenProduct { .claudeCode }
     /// Deduplicated responses from the last `retention` seconds.
     private(set) var records: [TokenRecord] = []
-    /// Every session the retained transcripts mention, keyed by session id.
-    private(set) var sessions: [String: SessionMeta] = [:]
-    /// Sessions whose `claude` process is running right now.
-    private(set) var live: [LiveSession] = []
     private(set) var lastScanned: Date?
     private(set) var error: String?
 
@@ -21,11 +17,9 @@ final class TokenStore: TokenLedger {
     nonisolated static let retention: TimeInterval = TimeInterval(CostRange.retentionDays) * 86400
 
     var scanner = TokenScanner()
-    var registry = SessionRegistry()
     /// The Claude folder in use, asked at every refresh so a Settings change applies to the next one.
     var folder: () -> ClaudeFolder = { ClaudeFolder.current() }
-    /// The `projects` root the scanner and registry were last aimed at by `followFolder`. Compared
-    /// rather than assigned blind, so a scanner or registry set by hand is left alone until the setting moves.
+    /// The `projects` root the scanner was last aimed at by `followFolder`.
     private var followedRoot = TokenScanner.defaultRoot
 
     private var timer: Timer?
@@ -54,33 +48,26 @@ final class TokenStore: TokenLedger {
         followFolder()
         do {
             records = try await scanner.scan(retainSince: Date().addingTimeInterval(-Self.retention))
-            sessions = Dictionary(uniqueKeysWithValues: await scanner.sessions().map { ($0.sessionId, $0) })
             lastScanned = Date()
             error = nil
         } catch {
             self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
-        // Cheap and independent of the transcripts, so a scan failure still shows what is open.
-        let registry = registry
-        live = await Task.detached(priority: .utility) { registry.live() }.value
     }
 
-    /// Points the scanner (with the cache of that folder) and the registry at the Claude folder
+    /// Points the scanner (with the cache of that folder) at the Claude folder
     /// when the setting has moved since the last refresh.
     private func followFolder() {
         let current = folder()
         guard current.projectsRoot != followedRoot else { return }
         followedRoot = current.projectsRoot
         scanner = TokenScanner(root: current.projectsRoot, cacheURL: current.tokenCacheURL)
-        registry.root = current.sessionsRoot
     }
 
     /// Takes a scan's worth of data as if the scanner had just produced it. The screenshot
     /// renderer feeds fixtures this way; nothing is read from disk.
-    func adopt(records: [TokenRecord], sessions: [SessionMeta], live: [LiveSession], at date: Date) {
+    func adopt(records: [TokenRecord], at date: Date) {
         self.records = records
-        self.sessions = Dictionary(uniqueKeysWithValues: sessions.map { ($0.sessionId, $0) })
-        self.live = live
         lastScanned = date
         error = nil
     }
@@ -91,65 +78,6 @@ final class TokenStore: TokenLedger {
     static func costWindowStart(now: Date = Date(), calendar: Calendar = .current) -> Date {
         calendar.date(byAdding: .day, value: 1 - CostReport.dayCount, to: calendar.startOfDay(for: now))
             ?? calendar.startOfDay(for: now)
-    }
-
-    var openCount: Int { live.count }
-    var busyCount: Int { live.filter(\.isBusy).count }
-
-    /// Open sessions first (busy before idle, then most recent activity), followed by sessions
-    /// that answered since `closedSince` but whose process is gone.
-    func sessionRows(closedSince: Date) -> [SessionRow] {
-        var byId: [String: [TokenRecord]] = [:]
-        for r in records { byId[r.sessionId ?? "", default: []].append(r) }
-        func row(id: String, live: LiveSession?, meta: SessionMeta?) -> SessionRow {
-            SessionRow(id: id, live: live, meta: meta,
-                       totals: TokenTotals.sum(byId[id] ?? [], since: .distantPast))
-        }
-        var rows = live.map { row(id: $0.sessionId, live: $0, meta: sessions[$0.sessionId]) }
-        let openIds = Set(live.map(\.sessionId))
-        for meta in sessions.values
-            where !openIds.contains(meta.sessionId) && meta.lastSeen >= closedSince {
-            rows.append(row(id: meta.sessionId, live: nil, meta: meta))
-        }
-        return rows.sorted { a, b in
-            if a.isOpen != b.isOpen { return a.isOpen }
-            if a.isBusy != b.isBusy { return a.isBusy }
-            return a.lastActivity > b.lastActivity
-        }
-    }
-}
-
-/// One line of the sessions window: the registry entry (when open), what the transcript says,
-/// and the session's tokens summed over the retained days.
-struct SessionRow: Identifiable, Equatable {
-    var id: String
-    var live: LiveSession?
-    var meta: SessionMeta?
-    var totals: TokenTotals
-
-    var isOpen: Bool { live != nil }
-    var isBusy: Bool { live?.isBusy ?? false }
-    var cwd: String? { live?.cwd ?? meta?.cwd }
-
-    /// A /rename wins, then Claude Code's own title, then the last prompt, then the slug.
-    var title: String {
-        if let name = live?.userName, !name.isEmpty { return name }
-        if let title = meta?.title, !title.isEmpty { return title }
-        if let prompt = meta?.lastPrompt, !prompt.isEmpty { return prompt }
-        if let slug = meta?.slug, !slug.isEmpty { return slug }
-        return String(id.prefix(8))
-    }
-
-    /// The transcript's last answer, or the registry's last write for a session that has not answered yet.
-    var lastActivity: Date {
-        if let seen = meta?.lastSeen, seen != .distantPast { return seen }
-        return live?.updatedAt.map { Date(timeIntervalSince1970: $0 / 1000) } ?? .distantPast
-    }
-
-    /// When the session began: the first transcript answer, else the process start.
-    var started: Date? {
-        if let first = meta?.firstSeen, first != .distantFuture { return first }
-        return live?.started
     }
 }
 

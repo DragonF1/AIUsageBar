@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The window behind the popover's gear and the right-click menu's "Settings…": the switches
 /// on "General", the menu bar text editor on "Menu bar", the colour scale editor on "Colours",
-/// the Claude Code folder and resume choices on "Claude", and the Antigravity OAuth client and
+/// the Claude Code folder on "Claude", and the Antigravity OAuth client and
 /// token file on "Antigravity". A segmented switch and a `switch` over the pane, not a `TabView`: the NSTabView
 /// behind that draws its tab strip in the light appearance while the window is dark, and the
 /// pane box it adds has no inner padding.
@@ -27,7 +27,7 @@ struct SettingsView: View {
             case .general: return "Switches and the menu bar tint"
             case .menuBar: return "What the menu bar reads"
             case .colours: return "Bands, cutoffs and their colours"
-            case .claude: return "Claude Code folder, resume"
+            case .claude: return "Claude Code folder"
             case .antigravity: return "OAuth client, token file"
             }
         }
