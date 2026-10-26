@@ -1229,11 +1229,6 @@ func assistantLine(id: String, ts: Date = Date(), model: String = "claude-opus-5
     return #"{"parentUuid":"\#(UUID().uuidString)","isSidechain":false,"message":{"model":"\#(model)","id":"\#(id)","type":"message","role":"assistant","content":[{"type":"text","text":"\#(text)"}],"stop_reason":"end_turn","stop_sequence":null\#(usageJSON)},"apiBlockIndex":\#(block),"requestId":"req_\#(id)","type":"assistant","uuid":"\#(UUID().uuidString)","timestamp":"\#(iso(ts))","sessionId":"\#(session)","version":"2.1.276"\#(extras)}"# + "\n"
 }
 
-/// The bookkeeping lines Claude Code rewrites as a session goes: `{"type":"…"` comes first.
-func metaLine(_ type: String, session: String = "s", _ key: String, _ value: String) -> String {
-    #"{"type":"\#(type)","\#(key)":"\#(value)","sessionId":"\#(session)"}"# + "\n"
-}
-
 func userLine(ts: Date = Date(), text: String = "hi") -> String {
     #"{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"\#(text)"},"uuid":"\#(UUID().uuidString)","timestamp":"\#(iso(ts))","sessionId":"s","cwd":"/Users/sam"}"# + "\n"
 }
@@ -1289,6 +1284,24 @@ final class TokenPricingTests: XCTestCase {
         XCTAssertEqual(t.cost, 0.000865, accuracy: 1e-12)
         XCTAssertEqual(TokenTotals.sum(records, since: now.addingTimeInterval(-7200)).tokens, 492)
         XCTAssertEqual(TokenTotals(), TokenTotals.sum([], since: now))
+    }
+
+    /// The binary-search sum over oldest-first records adds exactly what the general one does,
+    /// in the same order, so even the floating-point cost matches to the last bit.
+    func testSortedSumMatchesTheGeneralSum() {
+        let models = ["claude-opus-5", "claude-sonnet-4-6-20260101", "mystery-1", "gemini-3.1-pro-low"]
+        let base = Date(timeIntervalSinceReferenceDate: 800_000_000)
+        let records = (0..<500).map { i in
+            TokenRecord(timestamp: base.addingTimeInterval(Double(i / 3) * 97), model: models[(i * 7) % models.count],
+                        input: i * 13 % 1000, output: i * 31 % 500, cacheWrite5m: i % 17, cacheWrite1h: i % 5,
+                        cacheRead: i * 101 % 10_000)
+        }
+        let offsets: [TimeInterval] = [-1, 0, 97, 4850, 97 * 166, 97 * 167, 1e9]
+        for offset in offsets {
+            let start = base.addingTimeInterval(offset)
+            XCTAssertEqual(TokenTotals.sum(sorted: records, since: start), TokenTotals.sum(records, since: start), "since +\(offset)")
+        }
+        XCTAssertEqual(TokenTotals.sum(sorted: [], since: base), TokenTotals())
     }
 }
 
@@ -1380,19 +1393,13 @@ final class TokenScannerTests: XCTestCase {
         XCTAssertEqual(tokenSum(records), 222)
     }
 
-    private struct CacheShape: Decodable {
-        var version: Int
-        var offsets: [String: UInt64]
-        var records: [String: TokenRecord]
-    }
-
-    private func readCache(_ url: URL) throws -> CacheShape {
-        try UsageClient.decoder.decode(CacheShape.self, from: Data(contentsOf: url))
+    private func readCache(_ url: URL) throws -> TokenScanner.CacheFile {
+        try XCTUnwrap(TokenScanner.CacheFile(data: Data(contentsOf: url)))
     }
 
     func testIncrementalAppendOnlyReadsNewBytes() async throws {
         let root = try tempTranscriptRoot()
-        let cache = root.appendingPathComponent("cache/tokens.json")
+        let cache = root.appendingPathComponent("cache/tokens.bin")
         let line1 = assistantLine(id: "msg_1", in: 10, out: 10)
         let line2 = assistantLine(id: "msg_2", in: 20, out: 20)
         let line3 = assistantLine(id: "msg_3", in: 30, out: 30)
@@ -1412,6 +1419,7 @@ final class TokenScannerTests: XCTestCase {
         let second = try await scanner.scan(retainSince: since)
         XCTAssertEqual(second.count, 3)
         XCTAssertEqual(tokenSum(second), 120)
+        await scanner.flush()
         shape = try readCache(cache)
         XCTAssertEqual(shape.records.count, 3)
         XCTAssertEqual(shape.offsets[cacheKey(file)], UInt64((line1 + line2 + line3).utf8.count))
@@ -1423,7 +1431,7 @@ final class TokenScannerTests: XCTestCase {
 
     func testTruncatedFileIsReread() async throws {
         let root = try tempTranscriptRoot()
-        let cache = root.appendingPathComponent("cache/tokens.json")
+        let cache = root.appendingPathComponent("cache/tokens.bin")
         let file = try writeTranscript(root, "p/s.jsonl", assistantLine(id: "msg_1", in: 10, out: 10) + assistantLine(id: "msg_2", in: 20, out: 20))
         let scanner = TokenScanner(root: root, cacheURL: cache)
         let first = try await scanner.scan(retainSince: since)
@@ -1435,12 +1443,14 @@ final class TokenScannerTests: XCTestCase {
         let records = try await scanner.scan(retainSince: since)
         XCTAssertEqual(records.count, 3)
         XCTAssertEqual(tokenSum(records), 62)
+        await scanner.flush()
         XCTAssertEqual(try readCache(cache).offsets[cacheKey(file)], UInt64(short.utf8.count))
 
         // Emptied entirely: the offset falls back to 0 without touching the records.
         try Data().write(to: file)
         let emptied = try await scanner.scan(retainSince: since)
         XCTAssertEqual(tokenSum(emptied), 62)
+        await scanner.flush()
         XCTAssertEqual(try readCache(cache).offsets[cacheKey(file)], 0)
     }
 
@@ -1456,7 +1466,7 @@ final class TokenScannerTests: XCTestCase {
 
     func testDropsRecordsOlderThanRetention() async throws {
         let root = try tempTranscriptRoot()
-        let cache = root.appendingPathComponent("cache/tokens.json")
+        let cache = root.appendingPathComponent("cache/tokens.bin")
         let old = Date().addingTimeInterval(-9 * 86400)
         try writeTranscript(root, "p/s.jsonl", assistantLine(id: "msg_old", ts: old, in: 10, out: 10) + assistantLine(id: "msg_new", in: 1, out: 1))
         let scanner = TokenScanner(root: root, cacheURL: cache)
@@ -1466,6 +1476,7 @@ final class TokenScannerTests: XCTestCase {
         let records = try await scanner.scan(retainSince: since)
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(tokenSum(records), 2)
+        await scanner.flush()
         XCTAssertEqual(try readCache(cache).records.count, 1)
         // A fresh scan with the real window never admits the old line in the first place.
         let fresh = try await TokenScanner(root: root, cacheURL: nil).scan(retainSince: since)
@@ -1474,7 +1485,7 @@ final class TokenScannerTests: XCTestCase {
 
     func testCacheRoundTrip() async throws {
         let root = try tempTranscriptRoot()
-        let cache = root.appendingPathComponent("cache/tokens.json")
+        let cache = root.appendingPathComponent("cache/tokens.bin")
         let file = try writeTranscript(root, "p/s.jsonl", assistantLine(id: "msg_1", in: 10, out: 10) + assistantLine(id: "msg_2", in: 20, out: 20))
         let first = try await TokenScanner(root: root, cacheURL: cache).scan(retainSince: since)
         XCTAssertEqual(first.count, 2)
@@ -1494,16 +1505,110 @@ final class TokenScannerTests: XCTestCase {
         let second = try await TokenScanner(root: root, cacheURL: cache).scan(retainSince: since)
         XCTAssertEqual(second.count, 3)
         XCTAssertEqual(tokenSum(second), 62)
-        XCTAssertEqual(Set(try readCache(cache).records.keys), ["msg_1", "msg_2", "msg_3"])
+        XCTAssertEqual(Set(try readCache(cache).keys), Set(["msg_1", "msg_2", "msg_3"].map(TokenScanner.recordKey)))
 
         // A cache from another version is ignored and the files are read again.
-        let stale = try Data(contentsOf: cache)
-        let downgraded = String(decoding: stale, as: UTF8.self).replacingOccurrences(of: "\"version\":\(TokenScanner.cacheVersion)", with: "\"version\":0")
-        XCTAssertNotEqual(downgraded, String(decoding: stale, as: UTF8.self))
-        try downgraded.write(to: cache, atomically: true, encoding: .utf8)
+        var downgraded = try Data(contentsOf: cache)
+        downgraded.replaceSubrange(4..<8, with: [0, 0, 0, 0])
+        try downgraded.write(to: cache)
+        XCTAssertEqual(try readCache(cache).version, 0)
         let third = try await TokenScanner(root: root, cacheURL: cache).scan(retainSince: since)
         XCTAssertEqual(Set(third.map(\.total)), [2])
         XCTAssertEqual(try readCache(cache).version, TokenScanner.cacheVersion)
+    }
+
+    /// A version-4 `tokens.json` beside the new cache path is taken over as it is (offsets and
+    /// records), not rescanned, and deleted once the binary cache is written.
+    func testLegacyJSONCacheIsConvertedWithoutRereading() async throws {
+        let root = try tempTranscriptRoot()
+        let cache = root.appendingPathComponent("cache/tokens.bin")
+        let legacy = root.appendingPathComponent("cache/tokens.json")
+        let file = try writeTranscript(root, "p/s.jsonl", assistantLine(id: "msg_1", in: 10, out: 10) + assistantLine(id: "msg_2", in: 20, out: 20))
+        let consumed = try Data(contentsOf: file).count
+        let stamp = iso(Date().addingTimeInterval(-60))
+        let json = """
+        {"version":4,"offsets":{"\(cacheKey(file))":\(consumed)},"sessions":{},"records":{
+        "msg_1":{"timestamp":"\(stamp)","model":"claude-opus-5","input":10,"output":10,"cacheWrite5m":0,"cacheWrite1h":0,"cacheRead":0,"sessionId":"s"},
+        "msg_2":{"timestamp":"\(stamp)","model":"claude-opus-5","input":20,"output":20,"cacheWrite5m":0,"cacheWrite1h":0,"cacheRead":0}}}
+        """
+        try FileManager.default.createDirectory(at: legacy.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try json.write(to: legacy, atomically: true, encoding: .utf8)
+
+        // Same cover trick as the round trip: a scanner that re-read from 0 would lose msg_1 and msg_2.
+        let cover = userLine(text: String(repeating: "x", count: consumed - userLine(text: "").utf8.count))
+        let fh = try FileHandle(forWritingTo: file)
+        try fh.write(contentsOf: cover.data(using: .utf8)!)
+        try fh.close()
+        try appendTranscript(file, assistantLine(id: "msg_3", in: 1, out: 1))
+
+        let records = try await TokenScanner(root: root, cacheURL: cache).scan(retainSince: since)
+        XCTAssertEqual(records.count, 3)
+        XCTAssertEqual(tokenSum(records), 62)
+        XCTAssertTrue(records.allSatisfy { $0.sessionId == nil })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacy.path))
+        let converted = try readCache(cache)
+        XCTAssertEqual(converted.version, TokenScanner.cacheVersion)
+        XCTAssertEqual(Set(converted.keys), Set(["msg_1", "msg_2", "msg_3"].map(TokenScanner.recordKey)))
+    }
+
+    /// Files are read in path order and parallel sessions interleave, but the records come back
+    /// oldest first, including after a copy with more tokens moves a record earlier in place.
+    func testScanReturnsRecordsOldestFirst() async throws {
+        let root = try tempTranscriptRoot()
+        let now = Date()
+        let minutes = { (m: Double) in now.addingTimeInterval(-m * 60) }
+        try writeTranscript(root, "p/a.jsonl",
+            assistantLine(id: "msg_1", ts: minutes(50), in: 1, out: 0) + assistantLine(id: "msg_2", ts: minutes(10), in: 1, out: 0))
+        let b = try writeTranscript(root, "p/b.jsonl",
+            assistantLine(id: "msg_3", ts: minutes(40), in: 3, out: 0) + assistantLine(id: "msg_2", ts: minutes(55), in: 100, out: 0))
+        let scanner = TokenScanner(root: root, cacheURL: nil)
+        let records = try await scanner.scan(retainSince: since)
+        XCTAssertEqual(records.map(\.input), [100, 1, 3])
+        XCTAssertEqual(records.map(\.timestamp), records.map(\.timestamp).sorted())
+
+        // The index follows the move: a bigger copy of msg_2 replaces the record now at the front.
+        try appendTranscript(b, assistantLine(id: "msg_2", ts: minutes(55), in: 1000, out: 0)
+            + assistantLine(id: "msg_4", ts: minutes(45), in: 4, out: 0))
+        let again = try await scanner.scan(retainSince: since)
+        XCTAssertEqual(again.map(\.input), [1000, 1, 4, 3])
+    }
+
+    /// Scans after the first write the cache only once `saveInterval` has passed; `flush` writes
+    /// whatever is pending.
+    func testCacheWritesAreThrottledUntilFlush() async throws {
+        let root = try tempTranscriptRoot()
+        let cache = root.appendingPathComponent("cache/tokens.bin")
+        let file = try writeTranscript(root, "p/s.jsonl", assistantLine(id: "msg_1", in: 10, out: 10))
+        let scanner = TokenScanner(root: root, cacheURL: cache, saveInterval: 300)
+        _ = try await scanner.scan(retainSince: since)
+        XCTAssertEqual(try readCache(cache).records.count, 1)
+
+        try appendTranscript(file, assistantLine(id: "msg_2", in: 20, out: 20))
+        let records = try await scanner.scan(retainSince: since)
+        XCTAssertEqual(records.count, 2)
+        XCTAssertEqual(try readCache(cache).records.count, 1, "the second scan is inside the save interval")
+
+        await scanner.flush()
+        XCTAssertEqual(try readCache(cache).records.count, 2)
+        XCTAssertEqual(try readCache(cache).offsets[cacheKey(file)], UInt64(try Data(contentsOf: file).count))
+    }
+
+    func testCacheFileRoundTripsEveryField() throws {
+        let records = [
+            TokenRecord(timestamp: Date(timeIntervalSinceReferenceDate: 1234.5678), model: "",
+                        input: 1, output: 2, cacheWrite5m: 3, cacheWrite1h: 4, cacheRead: 5),
+            TokenRecord(timestamp: Date(timeIntervalSinceReferenceDate: 99_999.25), model: "claude-opus-5",
+                        input: 6, output: 7, cacheWrite5m: 8, cacheWrite1h: 9, cacheRead: 10_000_000_000),
+        ]
+        let file = TokenScanner.CacheFile(offsets: ["/a b/ç.jsonl": 42, "/x.jsonl": 0], records: records, keys: [7, .max])
+        let data = file.encoded()
+        let back = try XCTUnwrap(TokenScanner.CacheFile(data: data))
+        XCTAssertEqual(back.version, TokenScanner.cacheVersion)
+        XCTAssertEqual(back.records, records)
+        XCTAssertEqual(back.keys, [7, .max])
+        XCTAssertEqual(back.offsets, ["/a b/ç.jsonl": 42, "/x.jsonl": 0])
+        XCTAssertNil(TokenScanner.CacheFile(data: data.dropLast()), "a file cut short is rejected")
+        XCTAssertNil(TokenScanner.CacheFile(data: Data("{}".utf8)), "so is anything that is not a cache file")
     }
 
     func testLongLineSpanningChunks() async throws {
@@ -1732,82 +1837,6 @@ final class CostReportTests: XCTestCase {
         XCTAssertEqual(CostView.axisDollars(1.5), "$1.50")
         XCTAssertEqual(CostView.axisDollars(2), "$2")
         XCTAssertEqual(CostView.axisDollars(1500), "$1.5k")
-    }
-}
-
-final class SessionScanTests: XCTestCase {
-    func testRecordsCarrySessionAndMetaLinesBuildSessions() async throws {
-        let root = try tempTranscriptRoot()
-        let t0 = Date().addingTimeInterval(-3600)
-        let t1 = Date().addingTimeInterval(-60)
-        // Bookkeeping lines arrive before the first answer and are rewritten as the session goes.
-        let file = try writeTranscript(root, "p/a.jsonl",
-            metaLine("agent-color", session: "a", "agentColor", "pink")
-            + metaLine("ai-title", session: "a", "aiTitle", "First title")
-            + metaLine("last-prompt", session: "a", "lastPrompt", "make it\\ncompact")
-            + assistantLine(id: "msg_a1", ts: t0, in: 10, out: 10, session: "a", cwd: "/Users/sam/x", branch: "main", slug: "sunny-fox")
-            + metaLine("ai-title", session: "a", "aiTitle", "Second title")
-            + assistantLine(id: "msg_a2", ts: t1, in: 20, out: 20, session: "a"))
-        // A subagent transcript under the session folder carries the parent's session id.
-        try writeTranscript(root, "p/a/subagents/agent-1.jsonl",
-            assistantLine(id: "msg_sub", ts: t1, in: 100, out: 0, session: "a", cwd: "/Users/sam/x"))
-        try writeTranscript(root, "p/b.jsonl", assistantLine(id: "msg_b1", ts: t1, in: 1, out: 1, session: "b"))
-
-        let scanner = TokenScanner(root: root, cacheURL: nil)
-        let records = try await scanner.scan(retainSince: .distantPast)
-        XCTAssertEqual(records.filter { $0.sessionId == "a" }.count, 3)
-        XCTAssertEqual(records.filter { $0.sessionId == "b" }.count, 1)
-        XCTAssertEqual(records.filter { $0.sessionId == "a" }.reduce(0) { $0 + $1.total }, 160)
-
-        let sessions = Dictionary(uniqueKeysWithValues: await scanner.sessions().map { ($0.sessionId, $0) })
-        let a = try XCTUnwrap(sessions["a"])
-        XCTAssertEqual(a.title, "Second title")
-        XCTAssertEqual(a.color, "pink")
-        XCTAssertEqual(a.lastPrompt, "make it compact")
-        XCTAssertEqual(a.cwd, "/Users/sam/x")
-        XCTAssertEqual(a.gitBranch, "main")
-        XCTAssertEqual(a.slug, "sunny-fox")
-        XCTAssertEqual(a.firstSeen.timeIntervalSince1970, t0.timeIntervalSince1970, accuracy: 1)
-        XCTAssertEqual(a.lastSeen.timeIntervalSince1970, t1.timeIntervalSince1970, accuracy: 1)
-        let b = try XCTUnwrap(sessions["b"])
-        XCTAssertNil(b.title)
-        XCTAssertNil(b.color)
-
-        // An appended title shows up on the next incremental scan; the file offset carries over.
-        try appendTranscript(file, metaLine("ai-title", session: "a", "aiTitle", "Third title"))
-        _ = try await scanner.scan(retainSince: .distantPast)
-        let rescanned = await scanner.sessions()
-        XCTAssertEqual(rescanned.first { $0.sessionId == "a" }?.title, "Third title")
-    }
-
-    func testLongPromptIsClippedAndOldSessionsArePruned() async throws {
-        let root = try tempTranscriptRoot()
-        let old = Date().addingTimeInterval(-10 * 86400)
-        let long = String(repeating: "x", count: 500)
-        try writeTranscript(root, "p/a.jsonl",
-            metaLine("last-prompt", session: "a", "lastPrompt", long)
-            + assistantLine(id: "msg_a1", session: "a")
-            + assistantLine(id: "msg_old", ts: old, session: "old"))
-        let scanner = TokenScanner(root: root, cacheURL: nil)
-        _ = try await scanner.scan(retainSince: Date().addingTimeInterval(-8 * 86400))
-        let sessions = await scanner.sessions()
-        XCTAssertEqual(sessions.map(\.sessionId), ["a"])
-        XCTAssertEqual(sessions[0].lastPrompt?.count, 121)
-        XCTAssertTrue(sessions[0].lastPrompt!.hasSuffix("…"))
-    }
-
-    func testSessionMetaSurvivesTheCache() async throws {
-        let root = try tempTranscriptRoot()
-        let cacheURL = root.appendingPathComponent("tokens.json")
-        try writeTranscript(root, "p/a.jsonl",
-            metaLine("ai-title", session: "a", "aiTitle", "Kept") + assistantLine(id: "msg_a1", session: "a"))
-        _ = try await TokenScanner(root: root, cacheURL: cacheURL).scan(retainSince: .distantPast)
-
-        let reopened = TokenScanner(root: root, cacheURL: cacheURL)
-        let records = try await reopened.scan(retainSince: .distantPast)
-        XCTAssertEqual(records.first?.sessionId, "a")
-        let sessions = await reopened.sessions()
-        XCTAssertEqual(sessions.first?.title, "Kept")
     }
 }
 

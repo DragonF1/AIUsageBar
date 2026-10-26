@@ -54,7 +54,7 @@ struct ClaudeFolder: Equatable, Sendable {
 
     /// One scan cache per folder, so a record scanned under one never shows under another.
     var tokenCacheURL: URL {
-        supportDirectory.appendingPathComponent(isCustom ? "tokens-\(Self.hash8(path)).json" : "tokens.json")
+        supportDirectory.appendingPathComponent(isCustom ? "tokens-\(Self.hash8(path)).bin" : "tokens.bin")
     }
 
     // MARK: - Keychain

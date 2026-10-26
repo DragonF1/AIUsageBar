@@ -7,7 +7,7 @@ import Observation
 @MainActor
 protocol TokenLedger: AnyObject, Observable {
     var product: TokenProduct { get }
-    /// Deduplicated responses from the last `TokenStore.retention` seconds.
+    /// Deduplicated responses from the last `TokenStore.retention` seconds, oldest first.
     var records: [TokenRecord] { get }
     var lastScanned: Date? { get }
     var error: String? { get }
@@ -16,7 +16,7 @@ protocol TokenLedger: AnyObject, Observable {
 
 extension TokenLedger {
     func totals(since start: Date) -> TokenTotals {
-        TokenTotals.sum(records, since: start)
+        TokenTotals.sum(sorted: records, since: start)
     }
 
     func costReport(now: Date = Date(), range: CostRange = .month) -> CostReport {

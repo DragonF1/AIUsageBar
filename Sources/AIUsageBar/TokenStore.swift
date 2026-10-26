@@ -6,7 +6,7 @@ import Observation
 @MainActor @Observable
 final class TokenStore: TokenLedger {
     var product: TokenProduct { .claudeCode }
-    /// Deduplicated responses from the last `retention` seconds.
+    /// Deduplicated responses from the last `retention` seconds, oldest first.
     private(set) var records: [TokenRecord] = []
     private(set) var lastScanned: Date?
     private(set) var error: String?
@@ -45,9 +45,12 @@ final class TokenStore: TokenLedger {
         if inFlight { return }
         inFlight = true
         defer { inFlight = false }
-        followFolder()
+        await followFolder()
         do {
-            records = try await scanner.scan(retainSince: Date().addingTimeInterval(-Self.retention))
+            let scanned = try await scanner.scan(retainSince: Date().addingTimeInterval(-Self.retention))
+            // A scan that read nothing returns the same buffer; compare before assigning so the
+            // views observing `records` are not invalidated every poll.
+            if scanned != records { records = scanned }
             lastScanned = Date()
             error = nil
         } catch {
@@ -57,17 +60,24 @@ final class TokenStore: TokenLedger {
 
     /// Points the scanner (with the cache of that folder) at the Claude folder
     /// when the setting has moved since the last refresh.
-    private func followFolder() {
+    private func followFolder() async {
         let current = folder()
         guard current.projectsRoot != followedRoot else { return }
         followedRoot = current.projectsRoot
+        // The old folder's cache may hold up to `saveInterval` of unsaved progress.
+        await scanner.flush()
         scanner = TokenScanner(root: current.projectsRoot, cacheURL: current.tokenCacheURL)
+    }
+
+    /// Writes the scanner's pending cache changes (the app is quitting).
+    func flush() async {
+        await scanner.flush()
     }
 
     /// Takes a scan's worth of data as if the scanner had just produced it. The screenshot
     /// renderer feeds fixtures this way; nothing is read from disk.
     func adopt(records: [TokenRecord], at date: Date) {
-        self.records = records
+        self.records = records.sorted { $0.timestamp < $1.timestamp }
         lastScanned = date
         error = nil
     }

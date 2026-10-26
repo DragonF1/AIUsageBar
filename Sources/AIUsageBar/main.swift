@@ -30,6 +30,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         LoginItem.apply(Preferences.startAtLogin)
         if Preferences.notifications { monitor.notifier.requestAuthorization() }
     }
+
+    /// The token cache is written at most every few minutes; write what is pending before quitting
+    /// so the next launch does not re-read those minutes of transcripts. A scan still running
+    /// holds the scanner, so the reply has a deadline rather than waiting on it indefinitely.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        var replied = false
+        let reply = {
+            guard !replied else { return }
+            replied = true
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        Task { @MainActor in
+            await tokens.flush()
+            reply()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { MainActor.assumeIsolated { reply() } }
+        return .terminateLater
+    }
 }
 
 MainActor.assumeIsolated {

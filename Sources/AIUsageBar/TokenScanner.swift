@@ -12,7 +12,8 @@ struct TokenRecord: Codable, Equatable, Sendable {
     var cacheWrite5m: Int
     var cacheWrite1h: Int
     var cacheRead: Int
-    /// The session the response belongs to; subagent transcripts carry their parent's id.
+    /// The session the response belongs to. Antigravity records carry their conversation id;
+    /// the Claude Code scanner leaves it nil (nothing reads it, and 150k copies of a UUID add up).
     var sessionId: String? = nil
 
     var total: Int { input + output + cacheWrite5m + cacheWrite1h + cacheRead }
@@ -40,10 +41,6 @@ private struct TranscriptLine: Decodable {
     var timestamp: Date?
     var uuid: String?
     var requestId: String?
-    var sessionId: String?
-    var cwd: String?
-    var gitBranch: String?
-    var slug: String?
     var message: Message?
 
     struct Message: Decodable {
@@ -108,15 +105,6 @@ private struct TranscriptLine: Decodable {
     }
 }
 
-/// The small `{"type":"…"}` bookkeeping lines Claude Code rewrites every turn.
-private struct MetaLine: Decodable {
-    var type: String?
-    var sessionId: String?
-    var aiTitle: String?
-    var agentColor: String?
-    var lastPrompt: String?
-}
-
 enum TokenScanError: LocalizedError, Equatable {
     case missingRoot(String)
 
@@ -129,43 +117,66 @@ enum TokenScanError: LocalizedError, Equatable {
 
 // MARK: - Scanner
 
-/// Reads the Claude folder's `projects` (`~/.claude/projects` by default) incrementally: per-file byte offsets plus an id-keyed record map,
-/// both persisted so a poll only reads the bytes appended since the last one.
+/// Reads the Claude folder's `projects` (`~/.claude/projects` by default) incrementally: per-file
+/// byte offsets plus a deduplicated record list, both persisted so a poll only reads the bytes
+/// appended since the last one.
+///
+/// Sized for a heavy user (150k responses over the 91-day retention): the records live in one
+/// array kept oldest first, so a scan that read nothing hands back the very same buffer and the
+/// sums over it can binary-search their window; records are keyed by a 64-bit hash of the message
+/// id instead of the id itself; and the cache file is a flat binary written at most every
+/// `saveInterval` instead of a 40 MB JSON rewritten on every scan.
 actor TokenScanner {
     let root: URL
     /// nil disables persistence (tests).
     let cacheURL: URL?
+    /// The shortest gap between two cache writes; `flush()` writes whatever is pending.
+    let saveInterval: TimeInterval
 
     /// The folder set in Settings, read when a scanner is made; each folder has a cache of its own.
     static var defaultRoot: URL { ClaudeFolder.current().projectsRoot }
     static var defaultCacheURL: URL { ClaudeFolder.current().tokenCacheURL }
 
-    init(root: URL = TokenScanner.defaultRoot, cacheURL: URL? = TokenScanner.defaultCacheURL) {
+    init(root: URL = TokenScanner.defaultRoot, cacheURL: URL? = TokenScanner.defaultCacheURL,
+         saveInterval: TimeInterval = 300)
+    {
         self.root = root
         self.cacheURL = cacheURL
+        self.saveInterval = saveInterval
     }
 
     /// Bumped whenever the cache shape or the retention changes, which forces a full rescan on
     /// the next launch. 2: records carry a session id and the cache holds session metadata.
     /// 3: retention grew from 8 to 31 days; files already read to their end would otherwise
     /// never give back the older lines that a version-2 cache had pruned. 4: retention grew
-    /// again, to 91 days, for the cost window's 90-day range.
-    static let cacheVersion = 4
+    /// again, to 91 days, for the cost window's 90-day range. 5: the binary file below, with
+    /// hashed keys and no session metadata; a version-4 JSON cache is converted, not rescanned.
+    static let cacheVersion = 5
+    /// The last JSON cache version, the only one `migrateLegacyCache` converts.
+    static let legacyCacheVersion = 4
+    /// Records older than the retention window are dropped once the oldest is this far past it,
+    /// so pruning (which renumbers the whole index) runs about once an hour instead of every scan.
+    static let pruneSlack: TimeInterval = 3600
 
-    private struct Cache: Codable {
-        static let currentVersion = TokenScanner.cacheVersion
-        var version = currentVersion
-        /// Symlink-resolved absolute path -> bytes consumed; always ends just after a newline.
-        var offsets: [String: UInt64] = [:]
-        /// Message id -> record.
-        var records: [String: TokenRecord] = [:]
-        /// Session id -> what its transcript says about it.
-        var sessions: [String: SessionMeta] = [:]
-    }
+    /// Symlink-resolved absolute path -> bytes consumed; always ends just after a newline.
+    private var offsets: [String: UInt64] = [:]
+    /// Oldest first; ties keep the order they were read in.
+    private var records: [TokenRecord] = []
+    /// `recordKey` of each record, parallel to `records`.
+    private var keys: [UInt64] = []
+    /// Record key -> position in `records`.
+    private var index: [UInt64: Int] = [:]
+    /// One instance per model id, so 150k records share a handful of string buffers.
+    private var models: [String: String] = [:]
 
-    /// Loaded lazily on the first scan so init stays cheap and synchronous.
-    private var cache: Cache?
+    /// The cache is loaded lazily on the first scan so init stays cheap and synchronous.
+    private var loaded = false
     private var dirty = false
+    /// When the last save was tried (uptime, so a clock change neither stalls nor rushes the
+    /// next one); a failed write also waits out `saveInterval` rather than retrying every scan.
+    private var lastSaveAttempt: TimeInterval?
+    /// A version-4 JSON cache read by `load()`, deleted once its replacement is on disk.
+    private var legacyToRemove: URL?
     private let decoder = UsageClient.makeDecoder()
 
     private static let chunkSize = 1 << 20
@@ -174,69 +185,69 @@ actor TokenScanner {
     private static let newline: UInt8 = 0x0A
     /// Cheap raw prefilter; the files are compact JSON so the key and value are adjacent.
     private static let assistantMarker = Data("\"type\":\"assistant\"".utf8)
-    /// Bookkeeping lines put `type` first, so a prefix check picks them out without decoding.
-    private static let metaPrefixes = ["ai-title", "agent-color", "last-prompt"].map { Data("{\"type\":\"\($0)\"".utf8) }
-    private static let maxPromptLength = 120
 
-    /// Scans, prunes anything older than `retainSince`, saves the cache when dirty,
-    /// and returns every retained record.
+    /// Scans, prunes anything older than `retainSince` (with `pruneSlack`), saves the cache when
+    /// it is dirty and the last save is `saveInterval` old, and returns every retained record,
+    /// oldest first.
     func scan(retainSince: Date) throws -> [TokenRecord] {
-        var cache = self.cache ?? loadCache()
-        var seen = Set<String>()
+        if !loaded { load() }
+        let files = try enumerate()
+        let firstNew = records.count
+        // Lowest position whose record changed its timestamp in place; everything from there on
+        // is re-sorted along with the new records.
+        var firstMoved = firstNew
 
-        for file in try enumerate() {
+        for file in files {
             // Every line in a file is older than its mtime, so nothing inside can be in-window.
             guard file.mtime >= retainSince else { continue }
-            seen.insert(file.path)
-
-            var offset = cache.offsets[file.path] ?? 0
+            var offset = offsets[file.path] ?? 0
             // Replaced or truncated: re-read from the top, id dedup keeps that idempotent.
             if file.size < offset { offset = 0 }
             if file.size > offset {
                 offset = consume(file.url, from: offset) { line in
-                    ingest(line, into: &cache, retainSince: retainSince)
+                    if let moved = ingest(line, retainSince: retainSince) { firstMoved = min(firstMoved, moved) }
                 }
             }
-            if cache.offsets[file.path] != offset {
-                cache.offsets[file.path] = offset
+            if offsets[file.path] != offset {
+                offsets[file.path] = offset
                 dirty = true
             }
         }
+        restoreOrder(from: firstMoved)
 
-        // Prune aged records and offsets for files that are gone or aged out. A file appended
-        // to again later is re-read from 0; the timestamp filter and dedup keep that correct.
-        let before = cache.records.count
-        cache.records = cache.records.filter { $0.value.timestamp >= retainSince }
-        if cache.records.count != before { dirty = true }
-        let sessionsBefore = cache.sessions.count
-        cache.sessions = cache.sessions.filter { $0.value.lastSeen >= retainSince }
-        if cache.sessions.count != sessionsBefore { dirty = true }
-        let stale = cache.offsets.keys.filter { !seen.contains($0) }
-        for path in stale {
-            cache.offsets.removeValue(forKey: path)
+        prune(before: retainSince)
+        // Offsets for files that are gone or aged out. Every file still in the window has an
+        // entry by now, so there is nothing stale unless the map outgrew that set. A file
+        // appended to again later is re-read from 0; the timestamp filter and dedup keep that correct.
+        let inWindow = files.lazy.filter { $0.mtime >= retainSince }.map(\.path)
+        if offsets.count > inWindow.count {
+            let seen = Set(inWindow)
+            for path in offsets.keys where !seen.contains(path) {
+                offsets.removeValue(forKey: path)
+            }
             dirty = true
         }
 
-        self.cache = cache
-        if dirty {
-            saveCache(cache)
-            dirty = false
+        if dirty, lastSaveAttempt.map({ ProcessInfo.processInfo.systemUptime - $0 >= saveInterval }) ?? true {
+            save()
         }
-        return Array(cache.records.values)
+        return records
     }
 
-    /// Session metadata gathered by the scans so far (empty before the first scan).
-    func sessions() -> [SessionMeta] {
-        Array((cache?.sessions ?? [:]).values)
+    /// Writes the cache now if anything changed since the last write: before the app quits, and
+    /// before the store swaps this scanner for another folder's.
+    func flush() {
+        if dirty { save() }
     }
 
     // MARK: - files
 
     private struct Entry {
-        var url: URL
         var path: String
         var size: UInt64
         var mtime: Date
+
+        var url: URL { URL(fileURLWithPath: path, isDirectory: false) }
     }
 
     /// Every `*.jsonl` under the root at any depth (subagents nest two and four levels down), sorted by path.
@@ -245,18 +256,30 @@ actor TokenScanner {
         guard FileManager.default.fileExists(atPath: root.path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw TokenScanError.missingRoot(root.path)
         }
-        let keys: Set<URLResourceKey> = [.isRegularFileKey, .contentModificationDateKey, .fileSizeKey]
-        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys)) else {
+        // The root is resolved once and fts joins each name onto it, so every key is spelled the
+        // same however the root was (/var vs /private/var) without a realpath per file. A URL
+        // enumerator would hand back /private/var paths that the resolved root, and every cache
+        // written so far, spell /var.
+        let base = root.resolvingSymlinksInPath().path
+        // fts rather than FileManager: this runs on every refresh, and the directory enumerator's
+        // `fileAttributes` costs an attributesOfItem (extended attributes included) per file, about
+        // 70 ms a pass over 1500 transcripts. fts hands back the lstat it already made.
+        var argv: [UnsafeMutablePointer<CChar>?] = [strdup(base), nil]
+        defer { free(argv[0]) }
+        guard let stream = fts_open(&argv, FTS_PHYSICAL | FTS_NOCHDIR, nil) else {
             throw TokenScanError.missingRoot(root.path)
         }
+        defer { fts_close(stream) }
         var entries: [Entry] = []
-        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            guard let values = try? url.resourceValues(forKeys: keys), values.isRegularFile == true else { continue }
-            // Resolved, so the key is the same however the root was spelled (/var vs /private/var).
-            entries.append(Entry(url: url,
-                                 path: url.resolvingSymlinksInPath().path,
-                                 size: UInt64(values.fileSize ?? 0),
-                                 mtime: values.contentModificationDate ?? .distantPast))
+        while let node = fts_read(stream) {
+            // Regular files only (FTS_PHYSICAL reports symlinks as FTS_SL and never follows them).
+            guard Int32(node.pointee.fts_info) == FTS_F, let stat = node.pointee.fts_statp?.pointee else { continue }
+            let path = String(cString: node.pointee.fts_path)
+            guard path.hasSuffix(".jsonl") else { continue }
+            let mtime = stat.st_mtimespec
+            entries.append(Entry(path: path,
+                                 size: UInt64(max(stat.st_size, 0)),
+                                 mtime: Date(timeIntervalSince1970: TimeInterval(mtime.tv_sec) + TimeInterval(mtime.tv_nsec) / 1e9)))
         }
         return entries.sorted { $0.path < $1.path }
     }
@@ -296,11 +319,9 @@ actor TokenScanner {
 
     // MARK: - lines
 
-    private func ingest(_ line: Data, into cache: inout Cache, retainSince: Date) {
-        if Self.metaPrefixes.contains(where: { line.starts(with: $0) }) {
-            ingestMeta(line, into: &cache)
-            return
-        }
+    /// Takes in one line. Returns the position of a record whose timestamp it changed, which
+    /// breaks the oldest-first order before the new records; nil otherwise.
+    private func ingest(_ line: Data, retainSince: Date) -> Int? {
         guard line.range(of: Self.assistantMarker) != nil,
               let entry = try? decoder.decode(TranscriptLine.self, from: line),
               entry.type == "assistant",
@@ -308,83 +329,353 @@ actor TokenScanner {
               let usage = message.usage,
               let timestamp = entry.timestamp,
               timestamp >= retainSince,
-              let key = message.id ?? entry.requestId ?? entry.uuid
-        else { return }
+              let id = message.id ?? entry.requestId ?? entry.uuid
+        else { return nil }
 
-        let model = (message.model ?? "").replacingOccurrences(of: "[1m]", with: "")
-        guard model != "<synthetic>" else { return }
-
-        if let sessionId = entry.sessionId {
-            update(session: sessionId, in: &cache) { meta in
-                meta.firstSeen = min(meta.firstSeen, timestamp)
-                meta.lastSeen = max(meta.lastSeen, timestamp)
-                // The first cwd is where the session was started; later ones follow the shell's cd.
-                if meta.cwd == nil, let cwd = entry.cwd { meta.cwd = cwd }
-                if let branch = entry.gitBranch { meta.gitBranch = branch }
-                if let slug = entry.slug { meta.slug = slug }
-            }
-        }
+        var model = message.model ?? ""
+        if model.contains("[") { model = model.replacingOccurrences(of: "[1m]", with: "") }
+        guard model != "<synthetic>" else { return nil }
 
         let counts = usage.effective
         let record = TokenRecord(timestamp: timestamp,
-                                 model: model,
+                                 model: intern(model),
                                  input: counts.input,
                                  output: counts.output,
                                  cacheWrite5m: counts.write5m,
                                  cacheWrite1h: counts.write1h,
-                                 cacheRead: counts.cacheRead,
-                                 sessionId: entry.sessionId)
+                                 cacheRead: counts.cacheRead)
 
         // Block lines of one response repeat the same usage; forked sessions copy lines,
         // sometimes with zeroed usage. The larger total wins either way.
-        if let old = cache.records[key], old.total >= record.total { return }
-        cache.records[key] = record
+        let key = Self.recordKey(id)
+        guard let position = index[key] else {
+            index[key] = records.count
+            records.append(record)
+            keys.append(key)
+            dirty = true
+            return nil
+        }
+        let old = records[position]
+        guard record.total > old.total else { return nil }
+        records[position] = record
+        dirty = true
+        return record.timestamp == old.timestamp ? nil : position
+    }
+
+    private func intern(_ model: String) -> String {
+        if let shared = models[model] { return shared }
+        models[model] = model
+        return model
+    }
+
+    /// 64-bit FNV-1a of the message id. Stable across launches (Swift's `Hasher` is seeded per
+    /// process), and at 150k ids the odds of any two colliding are about one in a billion.
+    static func recordKey(_ id: String) -> UInt64 {
+        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
+        for byte in id.utf8 {
+            hash = (hash ^ UInt64(byte)) &* 0x0000_0100_0000_01b3
+        }
+        return hash
+    }
+
+    // MARK: - order
+
+    /// Puts `records` back in oldest-first order when everything before `start` already is.
+    /// A scan appends in file order, and parallel sessions interleave, so the new tail usually
+    /// lands a few minutes back: only the records from the earliest new timestamp onwards move.
+    private func restoreOrder(from start: Int) {
+        let count = records.count
+        guard start < count else { return }
+        var lowest = records[start].timestamp
+        var tailSorted = true
+        for i in (start + 1)..<count {
+            let t = records[i].timestamp
+            if t < records[i - 1].timestamp { tailSorted = false }
+            if t < lowest { lowest = t }
+        }
+        let from = firstIndex(after: lowest, below: start)
+        if tailSorted && from == start { return }
+
+        let order = (from..<count).sorted { a, b in
+            let ta = records[a].timestamp, tb = records[b].timestamp
+            return ta != tb ? ta < tb : a < b
+        }
+        let movedRecords = order.map { records[$0] }
+        let movedKeys = order.map { keys[$0] }
+        records.replaceSubrange(from..<count, with: movedRecords)
+        keys.replaceSubrange(from..<count, with: movedKeys)
+        for i in from..<count { index[keys[i]] = i }
+    }
+
+    /// The first position below `end` whose record is newer than `date` (`end` when none is).
+    private func firstIndex(after date: Date, below end: Int) -> Int {
+        var lo = 0, hi = end
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if records[mid].timestamp <= date { lo = mid + 1 } else { hi = mid }
+        }
+        return lo
+    }
+
+    /// Drops every record older than `retainSince`, but only once the oldest is `pruneSlack`
+    /// past it: the drop renumbers the index, which is not worth doing for a record or two.
+    private func prune(before retainSince: Date) {
+        guard let oldest = records.first?.timestamp,
+              oldest < retainSince.addingTimeInterval(-Self.pruneSlack) else { return }
+        var cut = 0, hi = records.count
+        while cut < hi {
+            let mid = (cut + hi) / 2
+            if records[mid].timestamp < retainSince { cut = mid + 1 } else { hi = mid }
+        }
+        records.removeFirst(cut)
+        keys.removeFirst(cut)
+        rebuildIndex()
         dirty = true
     }
 
-    /// Title, colour and last prompt: the latest line wins, and the prompt is clipped because a
-    /// pasted prompt can run to kilobytes.
-    private func ingestMeta(_ line: Data, into cache: inout Cache) {
-        guard let entry = try? decoder.decode(MetaLine.self, from: line),
-              let sessionId = entry.sessionId else { return }
-        update(session: sessionId, in: &cache) { meta in
-            if let title = entry.aiTitle { meta.title = title }
-            if let color = entry.agentColor { meta.color = color }
-            if let prompt = entry.lastPrompt {
-                let flat = prompt.replacingOccurrences(of: "\n", with: " ")
-                meta.lastPrompt = flat.count > Self.maxPromptLength ? String(flat.prefix(Self.maxPromptLength)) + "…" : flat
-            }
-        }
-    }
-
-    /// A session first seen through a bookkeeping line has no timestamps yet; `distantFuture` /
-    /// `distantPast` let the first assistant line's min/max set them.
-    private func update(session id: String, in cache: inout Cache, _ change: (inout SessionMeta) -> Void) {
-        var meta = cache.sessions[id] ?? SessionMeta(sessionId: id, firstSeen: .distantFuture, lastSeen: .distantPast)
-        change(&meta)
-        if meta != cache.sessions[id] {
-            cache.sessions[id] = meta
-            dirty = true
-        }
+    private func rebuildIndex() {
+        index = [:]
+        index.reserveCapacity(keys.count)
+        for (position, key) in keys.enumerated() { index[key] = position }
     }
 
     // MARK: - cache
 
-    /// Decode failure or a version mismatch means a full first scan.
-    private func loadCache() -> Cache {
-        guard let cacheURL,
-              let data = try? Data(contentsOf: cacheURL),
-              let cache = try? decoder.decode(Cache.self, from: data),
-              cache.version == Cache.currentVersion else { return Cache() }
-        return cache
+    /// A failed read or a version mismatch means a full first scan; a version-4 JSON cache next
+    /// to the binary path is converted instead (re-reading 90 days of transcripts can take minutes).
+    private func load() {
+        loaded = true
+        guard let cacheURL else { return }
+        if let data = try? Data(contentsOf: cacheURL, options: .mappedIfSafe),
+           let file = CacheFile(data: data), file.version == Self.cacheVersion {
+            adopt(file)
+            return
+        }
+        migrateLegacyCache()
     }
 
-    private func saveCache(_ cache: Cache) {
-        guard let cacheURL else { return }
-        let enc = JSONEncoder()
-        enc.dateEncodingStrategy = .iso8601
-        guard let data = try? enc.encode(cache) else { return }
+    private func adopt(_ file: CacheFile) {
+        offsets = file.offsets
+        records = file.records.map { var r = $0; r.model = intern(r.model); return r }
+        keys = file.keys
+        rebuildIndex()
+        // A file written by this version is already oldest first; this pass only costs a scan.
+        restoreOrder(from: 0)
+    }
+
+    /// `tokens.json` (version 4) next to a `tokens.bin` cache path: its offsets and records are
+    /// taken over as they are, and the JSON is deleted once the binary file is written.
+    private func migrateLegacyCache() {
+        guard let cacheURL, cacheURL.pathExtension == "bin" else { return }
+        let legacy = cacheURL.deletingPathExtension().appendingPathExtension("json")
+        guard FileManager.default.fileExists(atPath: legacy.path) else { return }
+        legacyToRemove = legacy
+        dirty = true
+        struct Legacy: Decodable {
+            var version: Int
+            var offsets: [String: UInt64]
+            var records: [String: TokenRecord]
+        }
+        autoreleasepool {
+            guard let data = try? Data(contentsOf: legacy),
+                  let old = try? decoder.decode(Legacy.self, from: data),
+                  old.version == Self.legacyCacheVersion else { return }
+            offsets = old.offsets
+            let sorted = old.records.sorted { $0.value.timestamp < $1.value.timestamp }
+            records = sorted.map { var r = $0.value; r.model = intern(r.model); r.sessionId = nil; return r }
+            keys = sorted.map { Self.recordKey($0.key) }
+            rebuildIndex()
+        }
+    }
+
+    private func save() {
+        guard let cacheURL else {
+            dirty = false
+            return
+        }
+        lastSaveAttempt = ProcessInfo.processInfo.systemUptime
+        let data = CacheFile(offsets: offsets, records: records, keys: keys).encoded()
         try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? data.write(to: cacheURL, options: .atomic)
+        guard (try? data.write(to: cacheURL, options: .atomic)) != nil else { return }
+        dirty = false
+        if let legacy = legacyToRemove {
+            try? FileManager.default.removeItem(at: legacy)
+            legacyToRemove = nil
+        }
+    }
+
+    // MARK: - cache file
+
+    /// The cache on disk, little-endian throughout:
+    ///
+    ///     "AUBT" | u32 version
+    ///     u32 n | n × (u32 byte count | UTF-8 path | u64 offset)
+    ///     u32 m | m × (u32 byte count | UTF-8 model id)
+    ///     u32 r | r × (u64 key | f64 timestamp | u32 model | 5 × i64 input, output,
+    ///                  cache write 5 m, cache write 1 h, cache read)
+    ///
+    /// About 60 bytes a record against JSON's 270, and it decodes without a parser.
+    struct CacheFile {
+        static let magic: [UInt8] = Array("AUBT".utf8)
+        static let recordSize = 8 + 8 + 4 + 5 * 8
+
+        var version = TokenScanner.cacheVersion
+        var offsets: [String: UInt64]
+        var records: [TokenRecord]
+        var keys: [UInt64]
+
+        init(offsets: [String: UInt64], records: [TokenRecord], keys: [UInt64]) {
+            self.offsets = offsets
+            self.records = records
+            self.keys = keys
+        }
+
+        func encoded() -> Data {
+            var modelIDs: [String: UInt32] = [:]
+            var modelList: [String] = []
+            for record in records where modelIDs[record.model] == nil {
+                modelIDs[record.model] = UInt32(modelList.count)
+                modelList.append(record.model)
+            }
+            let paths = offsets.map { (Array($0.key.utf8), $0.value) }
+            let names = modelList.map { Array($0.utf8) }
+            let size = 8 + 4 + paths.reduce(0) { $0 + 4 + $1.0.count + 8 }
+                + 4 + names.reduce(0) { $0 + 4 + $1.count }
+                + 4 + records.count * Self.recordSize
+
+            var data = Data(count: size)
+            data.withUnsafeMutableBytes { (raw: UnsafeMutableRawBufferPointer) in
+                var writer = Writer(raw: raw)
+                writer.bytes(Self.magic)
+                writer.u32(UInt32(version))
+                writer.u32(UInt32(paths.count))
+                for (path, offset) in paths {
+                    writer.u32(UInt32(path.count))
+                    writer.bytes(path)
+                    writer.u64(offset)
+                }
+                writer.u32(UInt32(names.count))
+                for name in names {
+                    writer.u32(UInt32(name.count))
+                    writer.bytes(name)
+                }
+                writer.u32(UInt32(records.count))
+                for (record, key) in zip(records, keys) {
+                    writer.u64(key)
+                    writer.u64(record.timestamp.timeIntervalSinceReferenceDate.bitPattern)
+                    writer.u32(modelIDs[record.model] ?? 0)
+                    writer.int(record.input)
+                    writer.int(record.output)
+                    writer.int(record.cacheWrite5m)
+                    writer.int(record.cacheWrite1h)
+                    writer.int(record.cacheRead)
+                }
+            }
+            return data
+        }
+
+        /// nil for anything that is not a whole cache file (wrong magic, cut short); the caller
+        /// checks the version.
+        init?(data: Data) {
+            let parsed: (Int, [String: UInt64], [TokenRecord], [UInt64])? = data.withUnsafeBytes { raw in
+                var reader = Reader(raw: raw)
+                guard reader.bytes(4).map(Array.init) == Self.magic, let version = reader.u32() else { return nil }
+                guard Int(version) == TokenScanner.cacheVersion else { return (Int(version), [:], [], []) }
+
+                guard let pathCount = reader.u32() else { return nil }
+                var offsets: [String: UInt64] = [:]
+                // A path entry is at least its length prefix and offset, so a corrupt count
+                // cannot reserve more than the file could hold.
+                offsets.reserveCapacity(min(Int(pathCount), reader.remaining / 12))
+                for _ in 0..<pathCount {
+                    guard let path = reader.string(), let offset = reader.u64() else { return nil }
+                    offsets[path] = offset
+                }
+                guard let modelCount = reader.u32() else { return nil }
+                var models: [String] = []
+                for _ in 0..<modelCount {
+                    guard let name = reader.string() else { return nil }
+                    models.append(name)
+                }
+                guard let recordCount = reader.u32().map(Int.init),
+                      reader.remaining >= recordCount * Self.recordSize else { return nil }
+                var records: [TokenRecord] = []
+                var keys: [UInt64] = []
+                records.reserveCapacity(recordCount)
+                keys.reserveCapacity(recordCount)
+                for _ in 0..<recordCount {
+                    guard let key = reader.u64(), let bits = reader.u64(), let model = reader.u32(),
+                          Int(model) < models.count,
+                          let input = reader.int(), let output = reader.int(), let write5m = reader.int(),
+                          let write1h = reader.int(), let cacheRead = reader.int() else { return nil }
+                    keys.append(key)
+                    records.append(TokenRecord(timestamp: Date(timeIntervalSinceReferenceDate: Double(bitPattern: bits)),
+                                               model: models[Int(model)], input: input, output: output,
+                                               cacheWrite5m: write5m, cacheWrite1h: write1h, cacheRead: cacheRead))
+                }
+                return (Int(version), offsets, records, keys)
+            }
+            guard let parsed else { return nil }
+            version = parsed.0
+            offsets = parsed.1
+            records = parsed.2
+            keys = parsed.3
+        }
+
+        private struct Writer {
+            let raw: UnsafeMutableRawBufferPointer
+            var at = 0
+
+            mutating func bytes(_ b: [UInt8]) {
+                // An empty model id ("" when a line has none) has no buffer to copy from.
+                guard !b.isEmpty else { return }
+                b.withUnsafeBytes { raw.baseAddress!.advanced(by: at).copyMemory(from: $0.baseAddress!, byteCount: b.count) }
+                at += b.count
+            }
+
+            mutating func u32(_ v: UInt32) {
+                raw.storeBytes(of: v.littleEndian, toByteOffset: at, as: UInt32.self)
+                at += 4
+            }
+
+            mutating func u64(_ v: UInt64) {
+                raw.storeBytes(of: v.littleEndian, toByteOffset: at, as: UInt64.self)
+                at += 8
+            }
+
+            mutating func int(_ v: Int) { u64(UInt64(bitPattern: Int64(v))) }
+        }
+
+        private struct Reader {
+            let raw: UnsafeRawBufferPointer
+            var at = 0
+
+            var remaining: Int { raw.count - at }
+
+            mutating func bytes(_ n: Int) -> UnsafeRawBufferPointer? {
+                guard n >= 0, remaining >= n else { return nil }
+                defer { at += n }
+                return UnsafeRawBufferPointer(rebasing: raw[at..<(at + n)])
+            }
+
+            mutating func u32() -> UInt32? {
+                guard remaining >= 4 else { return nil }
+                defer { at += 4 }
+                return UInt32(littleEndian: raw.loadUnaligned(fromByteOffset: at, as: UInt32.self))
+            }
+
+            mutating func u64() -> UInt64? {
+                guard remaining >= 8 else { return nil }
+                defer { at += 8 }
+                return UInt64(littleEndian: raw.loadUnaligned(fromByteOffset: at, as: UInt64.self))
+            }
+
+            mutating func int() -> Int? { u64().map { Int(Int64(bitPattern: $0)) } }
+
+            mutating func string() -> String? {
+                guard let count = u32(), let bytes = bytes(Int(count)) else { return nil }
+                return String(decoding: bytes, as: UTF8.self)
+            }
+        }
     }
 }

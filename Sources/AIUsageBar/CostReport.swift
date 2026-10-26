@@ -34,25 +34,37 @@ struct CostReport: Equatable {
     {
         let todayStart = calendar.startOfDay(for: now)
         let starts = (0..<dayCount).reversed().compactMap { calendar.date(byAdding: .day, value: -$0, to: todayStart) }
-        var byDay: [Date: TokenTotals] = [:]
+        let end = calendar.date(byAdding: .day, value: 1, to: todayStart) ?? todayStart.addingTimeInterval(86400)
+        var byDay = [TokenTotals](repeating: TokenTotals(), count: starts.count)
         var byModel: [String: TokenTotals] = [:]
         var today = TokenTotals()
         var total = TokenTotals()
+        var prices = TokenPricing.Lookup()
+        let todayIndex = starts.last == todayStart ? starts.count - 1 : nil
 
         for record in records {
-            let day = calendar.startOfDay(for: record.timestamp)
+            let ts = record.timestamp
             // Before the window, or stamped after today by a skewed clock: not on the chart.
-            guard let first = starts.first, day >= first, day <= todayStart else { continue }
-            byDay[day, default: TokenTotals()].add(record)
-            byModel[record.model, default: TokenTotals()].add(record)
-            total.add(record)
-            if day == todayStart { today.add(record) }
+            guard let first = starts.first, ts >= first, ts < end else { continue }
+            // The day is the last start at or before the timestamp: the same bucket
+            // `startOfDay` names, without a calendar computation per record.
+            var lo = 0, hi = starts.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if starts[mid] <= ts { lo = mid + 1 } else { hi = mid }
+            }
+            let day = lo - 1
+            let usd = prices.cost(record)
+            byDay[day].add(record, cost: usd)
+            byModel[record.model, default: TokenTotals()].add(record, cost: usd)
+            total.add(record, cost: usd)
+            if day == todayIndex { today.add(record, cost: usd) }
         }
 
         let models = byModel.map { ModelShare(model: $0.key, totals: $0.value) }.sorted { a, b in
             rank(a.totals, a.model, before: b.totals, b.model)
         }
-        return CostReport(days: starts.map { Day(start: $0, totals: byDay[$0] ?? TokenTotals()) },
+        return CostReport(days: zip(starts, byDay).map { Day(start: $0, totals: $1) },
                           models: models,
                           today: today,
                           total: total)

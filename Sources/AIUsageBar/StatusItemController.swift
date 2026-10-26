@@ -34,7 +34,8 @@ final class StatusItemController: NSObject {
     /// The Claude `projects` root `claudeActivityWatcher` was built for, to notice the setting move.
     private var watchedClaudeRoot: URL?
     private var antigravityActivityWatcher: ActivityWatcher?
-    private var activityPumpTimer: Timer?
+    /// One-shot, armed for the earliest pending fire of either scheduler; nil while both are idle.
+    private var activityTimer: Timer?
 
     init(store: UsageStore, antigravity: AntigravityStore, status: StatusStore, antigravityStatus: StatusStore,
          tokens: TokenStore, antigravityTokens: AntigravityTokenStore, monitor: QuotaMonitor)
@@ -98,7 +99,7 @@ final class StatusItemController: NSObject {
     // `deinit` is not main-actor isolated by itself.
     deinit {
         tickTimer?.invalidate()
-        activityPumpTimer?.invalidate()
+        activityTimer?.invalidate()
         claudeActivityWatcher?.stop()
         antigravityActivityWatcher?.stop()
     }
@@ -137,10 +138,17 @@ final class StatusItemController: NSObject {
 
     /// Only the clock moves between two ticks (every other input to the title re-renders through
     /// `observeStore` or the defaults observer), so re-substitute the last template against
-    /// `Date()` and redraw only when that text differs from what is on screen.
+    /// `Date()` and redraw only when that text differs from what is on screen. The one exception
+    /// is midnight: `{cost}` is today's total, and the records it sums need not change when the
+    /// day does, so a new day recomputes the values outright.
     private func tick() {
         guard let format = lastFormat, var values = lastValues else { return }
-        values.now = Date()
+        let now = Date()
+        guard Calendar.current.isDate(values.now, inSameDayAs: now) else {
+            render()
+            return
+        }
+        values.now = now
         guard MenuBarTemplate.render(format, values: values) != lastRenderedText else { return }
         render()
     }
@@ -167,21 +175,33 @@ final class StatusItemController: NSObject {
             }
         }
         antigravityActivityScheduler = antigravityScheduler
-        antigravityActivityWatcher = ActivityWatcher.forRoots(AntigravityTokenScanner.defaultRoots) { [weak antigravityScheduler] in
-            antigravityScheduler?.activityDetected()
+        antigravityActivityWatcher = ActivityWatcher.forRoots(AntigravityTokenScanner.defaultRoots) { [weak self] in
+            self?.antigravityActivityScheduler?.activityDetected()
+            self?.armActivityTimer()
         }
+    }
 
-        // The schedulers are pure and polled rather than self-timed, so one cheap timer drives
-        // both; a real fire happens no more often than `ActivityRefreshScheduler.minimumFetchInterval`.
-        let pump = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+    /// The schedulers are pure and polled rather than self-timed, so one timer drives both. It
+    /// exists only while a fire is pending (an idle app wakes for nothing) and is kept when it
+    /// already fires no later than the earliest pending time: activity only pushes that time
+    /// out, so a burst of events costs no timer churn, and an early fire just re-arms.
+    private func armActivityTimer() {
+        let due = [claudeActivityScheduler?.pendingFireAt, antigravityActivityScheduler?.pendingFireAt]
+            .compactMap { $0 }.min()
+        if let timer = activityTimer, timer.isValid, let due, timer.fireDate <= due { return }
+        activityTimer?.invalidate()
+        activityTimer = nil
+        guard let due else { return }
+        let timer = Timer(fire: due, interval: 0, repeats: false) { [weak self] _ in
             Task { @MainActor in
                 self?.claudeActivityScheduler?.checkAndFire()
                 self?.antigravityActivityScheduler?.checkAndFire()
+                self?.armActivityTimer()
             }
         }
-        pump.tolerance = 0.1
-        RunLoop.main.add(pump, forMode: .common)
-        activityPumpTimer = pump
+        timer.tolerance = 0.25
+        RunLoop.main.add(timer, forMode: .common)
+        activityTimer = timer
     }
 
     /// Watches the transcript root of the Claude folder in use, dropping any watcher on another.
@@ -191,6 +211,7 @@ final class StatusItemController: NSObject {
         claudeActivityWatcher?.stop()
         claudeActivityWatcher = ActivityWatcher.forRoots([root]) { [weak self] in
             self?.claudeActivityScheduler?.activityDetected()
+            self?.armActivityTimer()
         }
     }
 

@@ -76,7 +76,7 @@ final class ClaudeFolderTests: XCTestCase {
         XCTAssertEqual(f.projectsRoot.path, "/Users/test/.claude/projects")
         XCTAssertEqual(f.sessionsRoot.path, "/Users/test/.claude/sessions")
         XCTAssertEqual(f.localBinary, "/Users/test/.claude/local/claude")
-        XCTAssertEqual(f.tokenCacheURL.path, "/support/tokens.json")
+        XCTAssertEqual(f.tokenCacheURL.path, "/support/tokens.bin")
         XCTAssertEqual(f.environment, [:])
         XCTAssertNil(f.claudeConfigDir)
     }
@@ -89,7 +89,7 @@ final class ClaudeFolderTests: XCTestCase {
         XCTAssertEqual(f.projectsRoot.path, "/Users/test/work/claude/projects")
         XCTAssertEqual(f.sessionsRoot.path, "/Users/test/work/claude/sessions")
         XCTAssertEqual(f.localBinary, "/Users/test/work/claude/local/claude")
-        XCTAssertEqual(f.tokenCacheURL.path, "/support/tokens-9ac1b282.json", "a custom folder keeps its own scan cache")
+        XCTAssertEqual(f.tokenCacheURL.path, "/support/tokens-9ac1b282.bin", "a custom folder keeps its own scan cache")
         XCTAssertEqual(f.environment, ["CLAUDE_CONFIG_DIR": "/Users/test/work/claude"])
         XCTAssertEqual(f.claudeConfigDir, "/Users/test/work/claude")
     }
@@ -148,9 +148,9 @@ final class ClaudeFolderTests: XCTestCase {
     func testTokenStoreFollowsTheFolderSetting() async throws {
         let first = try scratchDirectory(self)
         let second = try scratchDirectory(self)
-        for (dir, session, id) in [(first, "one", "m1"), (second, "two", "m2")] {
-            try writeTranscript(dir.appendingPathComponent("projects"), "p/\(session).jsonl",
-                                assistantLine(id: id, in: 10, out: 10, session: session))
+        for (dir, input, id) in [(first, 1, "m1"), (second, 2, "m2")] {
+            try writeTranscript(dir.appendingPathComponent("projects"), "p/\(id).jsonl",
+                                assistantLine(id: id, in: input, out: 10))
         }
         let support = try scratchDirectory(self)
         var current = first.path
@@ -158,11 +158,11 @@ final class ClaudeFolderTests: XCTestCase {
         store.folder = { ClaudeFolder(configured: current, supportDirectory: support) }
 
         await store.refresh(reason: "test")
-        XCTAssertEqual(store.records.map(\.sessionId), ["one"])
+        XCTAssertEqual(store.records.map(\.input), [1])
 
         current = second.path
         await store.refresh(reason: "test")
-        XCTAssertEqual(store.records.map(\.sessionId), ["two"])
+        XCTAssertEqual(store.records.map(\.input), [2])
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.folder().tokenCacheURL.path),
                       "the second folder scans into a cache of its own")
     }

@@ -61,13 +61,45 @@ enum TokenPricing {
 
     /// USD for one record, nil when the model is not in the table.
     static func cost(_ record: TokenRecord) -> Double? {
-        guard let rate = rate(for: record.model) else { return nil }
+        cost(record, rate: rate(for: record.model))
+    }
+
+    /// USD for one record at a rate already looked up (nil: not in the table).
+    static func cost(_ record: TokenRecord, rate: Rate?) -> Double? {
+        guard let rate else { return nil }
         let usd = Double(record.input) * rate.input
             + Double(record.output) * rate.output
             + Double(record.cacheWrite5m) * rate.input * cacheWrite5m
             + Double(record.cacheWrite1h) * rate.input * cacheWrite1h
             + Double(record.cacheRead) * rate.input * rate.cacheReadMultiplier
         return usd / 1_000_000
+    }
+
+    /// `rate(for:)` remembered per model id for one pass over the records: a 90-day sum walks
+    /// 150k records across a handful of models, and the prefix scan was most of its cost.
+    struct Lookup {
+        private var lastModel: String?
+        private var lastRate: Rate?
+        private var known: [String: Rate?] = [:]
+
+        mutating func rate(for model: String) -> Rate? {
+            // Runs of one model are the norm, and interned ids compare by pointer.
+            if model == lastModel { return lastRate }
+            let rate: Rate?
+            if let cached = known[model] {
+                rate = cached
+            } else {
+                rate = TokenPricing.rate(for: model)
+                known[model] = rate
+            }
+            lastModel = model
+            lastRate = rate
+            return rate
+        }
+
+        mutating func cost(_ record: TokenRecord) -> Double? {
+            TokenPricing.cost(record, rate: rate(for: record.model))
+        }
     }
 }
 
@@ -86,21 +118,41 @@ struct TokenTotals: Equatable {
     var tokens: Int { input + output + cacheWrite + cacheRead }
 
     mutating func add(_ r: TokenRecord) {
+        add(r, cost: TokenPricing.cost(r))
+    }
+
+    /// Adds a record whose cost is already worked out (nil: the model has no price).
+    mutating func add(_ r: TokenRecord, cost usd: Double?) {
         input += r.input
         output += r.output
         cacheWrite += r.cacheWrite5m + r.cacheWrite1h
         cacheRead += r.cacheRead
-        if let usd = TokenPricing.cost(r) {
+        if let usd {
             cost += usd
         } else {
             unpricedTokens += r.total
         }
     }
 
-    /// Sums every record with `timestamp >= start`.
+    /// Sums every record with `timestamp >= start`, in any order.
     static func sum(_ records: [TokenRecord], since start: Date) -> TokenTotals {
         var t = TokenTotals()
-        for r in records where r.timestamp >= start { t.add(r) }
+        var prices = TokenPricing.Lookup()
+        for r in records where r.timestamp >= start { t.add(r, cost: prices.cost(r)) }
+        return t
+    }
+
+    /// `sum(_:since:)` for records kept oldest first: finds the window's first record by
+    /// binary search and only walks from there, so "today" touches today's records alone.
+    static func sum(sorted records: [TokenRecord], since start: Date) -> TokenTotals {
+        var lo = 0, hi = records.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if records[mid].timestamp < start { lo = mid + 1 } else { hi = mid }
+        }
+        var t = TokenTotals()
+        var prices = TokenPricing.Lookup()
+        for r in records[lo...] { t.add(r, cost: prices.cost(r)) }
         return t
     }
 }

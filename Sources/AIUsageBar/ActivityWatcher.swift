@@ -13,7 +13,7 @@ import os
 /// popover's own stale window.
 ///
 /// Main-actor isolated so the compiler, not convention, guarantees `activityDetected()` (from the
-/// watcher's main-queue FSEvents callback) and `checkAndFire()` (from the pump timer) never race.
+/// watcher's main-queue FSEvents callback) and `checkAndFire()` (from the activity timer) never race.
 @MainActor
 final class ActivityRefreshScheduler {
     /// How long to wait after the last event before firing.

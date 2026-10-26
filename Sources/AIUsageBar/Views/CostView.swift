@@ -12,12 +12,43 @@ struct CostView: View {
     @AppStorage(Preferences.Key.costRange) private var range: CostRange = .month
     @State private var now = Date()
     @State private var hovered: Date?
+    /// Built when the records, the range or the minute change; hovering a bar redraws the
+    /// body on every pointer move and must not walk 90 days of records each time.
+    @State private var memo = ReportMemo()
     private let tick = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
-    private var report: CostReport { tokens.costReport(now: now, range: range) }
+    private struct ReportKey: Equatable {
+        var ledger: ObjectIdentifier
+        var scanned: Date?
+        var count: Int
+        var range: CostRange
+        var now: Date
+    }
+
+    /// A class so the body can fill it while rendering: writing to it is not a state change, so
+    /// the report is built once per key, in the same pass that first needs it.
+    private final class ReportMemo {
+        var key: ReportKey?
+        var report: CostReport?
+
+        func report(for key: ReportKey, build: () -> CostReport) -> CostReport {
+            if key == self.key, let report { return report }
+            let built = build()
+            self.key = key
+            report = built
+            return built
+        }
+    }
+
+    private var reportKey: ReportKey {
+        // `scanned` as well as `count`: a scan can rewrite a record in place (a response's
+        // usage grows while it streams) without changing how many there are.
+        ReportKey(ledger: ObjectIdentifier(tokens), scanned: tokens.lastScanned,
+                  count: tokens.records.count, range: range, now: now)
+    }
 
     var body: some View {
-        let report = report
+        let report = memo.report(for: reportKey) { tokens.costReport(now: now, range: range) }
         VStack(spacing: 0) {
             header
             Divider()

@@ -34,7 +34,9 @@ final class AntigravityTokenStore: TokenLedger {
         inFlight = true
         defer { inFlight = false }
         do {
-            records = try await scanner.scan(retainSince: Date().addingTimeInterval(-TokenStore.retention))
+            let scanned = Self.ordered(try await scanner.scan(retainSince: Date().addingTimeInterval(-TokenStore.retention)))
+            // Unchanged records keep the old array, so nothing observing them redraws.
+            if scanned != records { records = scanned }
             lastScanned = Date()
             error = nil
         } catch {
@@ -44,8 +46,19 @@ final class AntigravityTokenStore: TokenLedger {
 
     /// Takes a scan's worth of records as if the scanner had just produced them (the screenshot renderer).
     func adopt(records: [TokenRecord], at date: Date) {
-        self.records = records
+        self.records = Self.ordered(records)
         lastScanned = date
         error = nil
+    }
+
+    /// Oldest first, as `TokenLedger` promises; ties broken on content so the same set of
+    /// records always comes out in the same order and compares equal to the last scan's.
+    private static func ordered(_ records: [TokenRecord]) -> [TokenRecord] {
+        records.sorted { a, b in
+            if a.timestamp != b.timestamp { return a.timestamp < b.timestamp }
+            if a.total != b.total { return a.total < b.total }
+            if a.model != b.model { return a.model < b.model }
+            return (a.sessionId ?? "") < (b.sessionId ?? "")
+        }
     }
 }
